@@ -173,7 +173,7 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
 .score li .nm{flex:1;font-weight:600}
 .score li .left{color:var(--muted);font-size:13px}
 .score li .w{font-family:var(--display);font-weight:800;min-width:56px;text-align:right}
-#toasts{position:fixed;left:0;right:0;top:12px;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:30;pointer-events:none;padding:0 16px}
+#toasts{position:fixed;left:0;right:0;top:64px;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:30;pointer-events:none;padding:0 16px}
 .toast{background:#f5efe3;color:#14212c;padding:9px 14px;border-radius:12px;font-weight:600;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.35);max-width:440px;text-align:center;animation:drop .25s ease-out}
 .toast.call,.toast.catch{background:var(--red);color:#fff}
 .toast.win{background:var(--gold);color:#2a1d00}
@@ -190,6 +190,44 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
 @media (max-width:440px){.topbar{gap:6px;padding:10px 10px 6px}.topbar .round{display:none}.topbar .tcode{flex:1;font-size:16px}.reacts button{width:32px;height:32px;font-size:17px}.topbar .btn.small{padding:0 10px}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (min-height:760px){.tablearea .discard .card{--w:116px!important}}
+
+/* ---------- v2: chat, hand scrolling, celebration ---------- */
+.iconbtn{position:relative;width:44px;min-height:38px;border-radius:11px;background:rgba(245,239,227,.1);border:1px solid var(--line);display:grid;place-items:center}
+.iconbtn svg{width:20px;height:20px}
+.badge{position:absolute;top:-6px;right:-6px;min-width:19px;height:19px;padding:0 5px;border-radius:99px;background:var(--red);color:#fff;font-size:11px;font-weight:800;display:grid;place-items:center;border:2px solid var(--felt)}
+.handwrap{position:relative}
+.handwrap::before,.handwrap::after{content:"";position:absolute;top:34px;bottom:0;width:34px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:2}
+.handwrap::before{left:0;background:linear-gradient(to right,rgba(4,14,22,.95),rgba(4,14,22,0))}
+.handwrap::after{right:0;background:linear-gradient(to left,rgba(4,14,22,.95),rgba(4,14,22,0))}
+.handwrap.more-l::before,.handwrap.more-r::after{opacity:1}
+.hand{scroll-behavior:smooth;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;touch-action:pan-x}
+.handlabel .swipe{color:var(--gold)}
+.scrollbtn{position:absolute;top:50%;z-index:3;width:34px;height:52px;border-radius:12px;background:rgba(245,239,227,.92);color:#14212c;font-size:22px;font-weight:800;display:grid;place-items:center;box-shadow:0 4px 12px rgba(0,0,0,.35)}
+.scrollbtn.l{left:4px}.scrollbtn.r{right:4px}
+.chatsheet{position:fixed;inset:0;z-index:22;display:flex;align-items:flex-end;justify-content:center;background:rgba(3,10,16,.35)}
+.chatbox{width:100%;max-width:560px;height:min(68%,520px);background:#122f45;border:1px solid var(--line);border-radius:22px 22px 0 0;display:flex;flex-direction:column;overflow:hidden}
+.chathead{display:flex;align-items:center;gap:10px;padding:12px 14px 8px}
+.chathead h3{flex:1;margin:0;font-family:var(--display);font-size:20px;font-weight:800}
+.msgs{flex:1;overflow-y:auto;padding:6px 14px 10px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:82%;align-self:flex-start;background:rgba(245,239,227,.09);border-radius:14px 14px 14px 4px;padding:7px 11px}
+.msg.mine{align-self:flex-end;background:var(--gold);color:#2a1d00;border-radius:14px 14px 4px 14px}
+.msg .who{display:block;font-size:12px;font-weight:700;opacity:.8}
+.msg .txt{white-space:pre-wrap;overflow-wrap:anywhere}
+.msg time{font-size:11px;opacity:.6;margin-left:6px}
+.quick{display:flex;gap:6px;overflow-x:auto;padding:4px 14px;scrollbar-width:none}
+.quick::-webkit-scrollbar{display:none}
+.quick button{flex:none;min-height:34px;padding:0 12px;border-radius:99px;background:rgba(245,239,227,.09);border:1px solid var(--line);font-size:14px;font-weight:600}
+.chatform{display:flex;gap:8px;padding:8px 12px calc(10px + env(safe-area-inset-bottom))}
+.chatform .inp{flex:1;min-width:0}
+.toast.chat{background:#122f45;color:var(--ink);border:1px solid var(--line);text-align:left}
+.toast.chat b{color:var(--gold)}
+.hostnote{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;color:var(--muted);font-size:14px}
+.toggle[disabled]{opacity:.6;cursor:not-allowed}
+#updateBar{position:fixed;left:12px;right:12px;top:12px;z-index:45;background:var(--gold);color:#2a1d00;border-radius:14px;padding:10px 12px;display:flex;align-items:center;gap:10px;font-weight:700;box-shadow:0 8px 24px rgba(0,0,0,.35);max-width:536px;margin:0 auto}
+#updateBar span{flex:1;font-size:14px}
+#updateBar .btn{min-height:36px;background:#2a1d00;color:var(--gold);border:0}
+.confetti{position:fixed;top:-20px;width:10px;height:16px;z-index:21;pointer-events:none;border-radius:2px;animation:fall linear forwards}
+@keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
 </style>
 </head>
 <body>
@@ -236,15 +274,36 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
     <button class="btn small" id="backBtn" aria-label="Back to home">←</button>
     <span class="tcode" id="gCode">----</span>
     <span class="round" id="gRound"></span>
-    <div class="reacts" id="reacts">
-      <button data-e="😂" aria-label="Laugh">😂</button>
-      <button data-e="😱" aria-label="Shock">😱</button>
-      <button data-e="😤" aria-label="Annoyed">😤</button>
-      <button data-e="👏" aria-label="Clap">👏</button>
-    </div>
+    <button class="iconbtn" id="chatBtn" aria-label="Open chat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z"/></svg>
+      <span class="badge" id="chatBadge" hidden>0</span>
+    </button>
     <button class="btn small" id="playersBtn">Players</button>
   </div>
   <div id="gBody" style="flex:1;min-height:0;display:flex;flex-direction:column"></div>
+</div>
+
+<!-- chat -->
+<div id="chat" class="chatsheet" hidden>
+  <div class="chatbox" role="dialog" aria-modal="true" aria-labelledby="chatTitle">
+    <div class="chathead"><h3 id="chatTitle">Table chat</h3><button class="btn small" id="chatClose">Close</button></div>
+    <div class="msgs" id="msgs" aria-live="polite"></div>
+    <div class="quick" id="quick">
+      <button data-e="😂" aria-label="Send laugh reaction">😂</button>
+      <button data-e="😱" aria-label="Send shock reaction">😱</button>
+      <button data-e="😤" aria-label="Send annoyed reaction">😤</button>
+      <button data-e="👏" aria-label="Send clap reaction">👏</button>
+      <button data-q="Your turn! ⏰">Your turn! ⏰</button>
+      <button data-q="Nooo 😭">Nooo 😭</button>
+      <button data-q="Nice one 👏">Nice one 👏</button>
+      <button data-q="Hurry up 🐢">Hurry up 🐢</button>
+      <button data-q="GG 🎉">GG 🎉</button>
+    </div>
+    <form class="chatform" id="chatForm" autocomplete="off">
+      <input id="chatInp" class="inp" maxlength="200" placeholder="Say something…" aria-label="Message" enterkeyhint="send">
+      <button class="btn primary" type="submit">Send</button>
+    </form>
+  </div>
 </div>
 
 <!-- color picker -->
@@ -266,13 +325,15 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
   <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="psTitle">
     <h3 id="psTitle">Players</h3>
     <ul class="plist" id="psList"></ul>
-    <p class="empty">Remove someone who left so the game can keep going. Their cards go back in the deck.</p>
+    <p class="empty" id="psNote"></p>
+    <button class="toggle" id="soundBtn" aria-pressed="true"><span class="sw"></span><span><b>Sounds</b><span class="d">A soft chime on your turn, a fanfare when someone wins, a pop for new messages.</span></span></button>
     <div class="row"><button class="btn grow" id="psClose">Close</button><button class="btn danger grow" id="psLeave">Leave table</button></div>
   </div>
 </div>
 
 <div id="toasts" aria-live="polite"></div>
 <div id="conn" hidden>Reconnecting…</div>
+<div id="updateBar" hidden><span>A new version of the game is ready.</span><button class="btn small" id="reloadBtn">Refresh</button></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="/engine.js"></script>
@@ -285,23 +346,71 @@ function load(k){try{return localStorage.getItem(k)||''}catch(e){return ''}}
 let token=load('lc-token');
 if(!/^[a-zA-Z0-9]{16,64}$/.test(token)){token=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');store('lc-token',token);}
 
-let away=false,G=null,view='home',armedCall=false,seenV=-1,lastTopV=-1,pendingWild=null,ready=false;
+let away=false,G=null,view='home',armedCall=false,seenV=-1,lastTopV=-1,pendingWild=null,ready=false,build=null;
+let chatMsgs=[],unread=0;
 const socket=io({transports:['websocket','polling']});
+
+/* ---------- sounds (made in the browser, no files) ---------- */
+const Snd={
+  ctx:null,on:load('lc-sound')!=='off',
+  unlock(){
+    if(!this.ctx){try{this.ctx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){return;}}
+    if(this.ctx.state==='suspended') this.ctx.resume().catch(()=>{});
+  },
+  tone(freq,at,dur,type,vol){
+    const c=this.ctx,t=c.currentTime+at;
+    const o=c.createOscillator(),g=c.createGain();
+    o.type=type||'sine';o.frequency.setValueAtTime(freq,t);
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(vol||0.1,t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+dur+0.05);
+  },
+  play(name){
+    if(!this.on) return;
+    this.unlock();if(!this.ctx||this.ctx.state!=='running') return;
+    try{
+      if(name==='turn'){this.tone(659.25,0,0.55,'sine',0.07);this.tone(987.77,0.14,0.8,'sine',0.055);}
+      else if(name==='chat'){this.tone(1046.5,0,0.12,'sine',0.05);this.tone(1318.5,0.06,0.14,'sine',0.04);}
+      else if(name==='win'){
+        [523.25,659.25,783.99,1046.5].forEach((f,i)=>this.tone(f,i*0.12,0.3,'triangle',0.14));
+        [523.25,659.25,783.99,1046.5].forEach(f=>this.tone(f,0.55,1.3,'triangle',0.08));
+        this.tone(1318.5,0.55,1.3,'sine',0.05);
+      }
+      else if(name==='roundover'){[783.99,987.77,1174.66].forEach((f,i)=>this.tone(f,i*0.11,0.45,'triangle',0.09));}
+    }catch(e){}
+  }
+};
+document.addEventListener('pointerdown',()=>Snd.unlock(),{passive:true});
+
+function confetti(n){
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const cols=['var(--red)','var(--yellow)','var(--green)','var(--blue)','var(--gold)'];
+  for(let i=0;i<n;i++){
+    const d=document.createElement('div');d.className='confetti';
+    d.style.left=Math.random()*100+'vw';d.style.background=cols[i%cols.length];
+    d.style.animationDuration=(1.8+Math.random()*1.8)+'s';d.style.animationDelay=(Math.random()*0.6)+'s';
+    d.style.transform=`rotate(${Math.random()*360}deg)`;
+    document.body.appendChild(d);setTimeout(()=>d.remove(),4500);
+  }
+}
 
 function myNick(){return ($('#nick').value||'').trim().slice(0,18);}
 function playerOf(u){return G&&G.players.find(p=>p.id===u);}
 function nameOf(u){const p=playerOf(u);return p?p.name:(G&&G.gone&&G.gone[u])||'Player';}
 function isOnline(u){const p=playerOf(u);return !!(p&&p.online);}
+function isHost(){return !!G&&G.host===G.me;}
 function fmt(msg){return String(msg).replace(/\{\{([^}]+)\}\}/g,(_,u)=>nameOf(u));}
 function hue(u){let h=0;for(const ch of String(u))h=(h*31+ch.charCodeAt(0))>>>0;return h%360;}
 function avatar(u){const n=nameOf(u);return `<span class="av" style="background:hsl(${hue(u)} 52% 42%)">${esc(n.trim().charAt(0).toUpperCase()||'?')}<i class="dot ${isOnline(u)?'on':''}"></i></span>`;}
 function count(u){return (G.counts&&G.counts[u])||0;}
 
-function toast(msg,kind){
-  const el=document.createElement('div');el.className='toast '+(kind||'');el.textContent=msg;
+function toast(msg,kind,html){
+  const el=document.createElement('div');el.className='toast '+(kind||'');
+  if(html) el.innerHTML=html; else el.textContent=msg;
   const box=$('#toasts');box.appendChild(el);
   while(box.children.length>3) box.firstChild.remove();
-  setTimeout(()=>el.remove(),kind==='win'?4200:2800);
+  setTimeout(()=>el.remove(),kind==='win'?4200:kind==='chat'?4000:2800);
 }
 function buzz(){try{navigator.vibrate&&navigator.vibrate(60)}catch(e){}}
 
@@ -333,18 +442,31 @@ if(hashCode()) $('#codeInp').value=hashCode();
 
 socket.on('connect',async()=>{
   $('#conn').hidden=true;
-  const r=await send('hello',{token});
+  const r=await send('hello',{token,code:hashCode()||load('lc-code')||undefined});
+  if(r.build){if(!build) build=r.build; else if(r.build!==build) $('#updateBar').hidden=false;}
   ready=true;$('#createBtn').disabled=false;$('#joinBtn').disabled=false;
   $('#homeNote').textContent=hashCode()?'Type your name, then tap Join.':'Start a table, then send your friends the link.';
-  if(r.ok&&r.code){showGame(r.code);if(myNick())send('rename',{name:myNick()});}
-  else if(hashCode()&&myNick()) joinTable(hashCode());
-  else if(view==='game'){goHome(false);}
+  if(r.ok&&r.code&&!away){showGame(r.code);if(myNick())send('rename',{name:myNick()});}
+  else if(hashCode()&&myNick()&&!away) joinTable(hashCode());
+  else if(view==='game'&&!(r.ok&&r.code)){toast('That table has closed');goHome(true);}
 });
 socket.on('disconnect',()=>{setTimeout(()=>{if(!socket.connected)$('#conn').hidden=false;},1500);});
 socket.on('connect_error',()=>{if(!ready)$('#homeNote').textContent='Waking up the game server. This can take up to a minute the first time.';});
 socket.on('state',s=>onState(s));
-socket.on('left',()=>{toast('You left the table');goHome(true);});
-socket.on('react',m=>{if(['😂','😱','😤','👏'].includes(m.e))floatEmoji(m.e,m.by);});
+socket.on('left',()=>{store('lc-code','');toast('You left the table');goHome(true);});
+socket.on('react',m=>{if(!away&&['😂','😱','😤','👏'].includes(m.e))floatEmoji(m.e,m.by);});
+socket.on('chatHistory',list=>{chatMsgs=Array.isArray(list)?list.slice(-60):[];renderChat();});
+socket.on('chat',m=>{
+  if(away||!m||!m.text) return;
+  chatMsgs.push(m);if(chatMsgs.length>60)chatMsgs.shift();
+  const open=!$('#chat').hidden;
+  renderChat();
+  if(m.by!==(G&&G.me)){
+    Snd.play('chat');
+    if(!open){unread++;updateBadge();toast('',`chat`,`<b>${esc(nameOf(m.by))}:</b> ${esc(m.text)}`);}
+  }
+});
+$('#reloadBtn').onclick=()=>location.reload();
 
 $('#nick').addEventListener('change',()=>store('lc-nick',myNick()));
 $('#codeInp').addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z]/g,'');});
@@ -352,7 +474,7 @@ $('#createBtn').addEventListener('click',async()=>{
   store('lc-nick',myNick());$('#createBtn').disabled=true;
   const r=await send('create',{name:myNick()});
   $('#createBtn').disabled=false;
-  if(r.ok) showGame(r.code);
+  if(r.ok){away=false;showGame(r.code);}
 });
 $('#joinBtn').addEventListener('click',()=>{const c=$('#codeInp').value.trim();if(c.length===4)joinTable(c);else toast('Enter the 4-letter table code');});
 $('#codeInp').addEventListener('keydown',e=>{if(e.key==='Enter')$('#joinBtn').click();});
@@ -366,17 +488,19 @@ async function joinTable(code){
 }
 function showGame(code){
   view='game';$('#home').hidden=true;$('#game').hidden=false;$('#gCode').textContent=code;
+  store('lc-code',code);
   if(location.hash!=='#'+code) history.replaceState(null,'','#'+code);
-  if(!G||G.code!==code){G=null;seenV=-1;$('#gBody').innerHTML='<div class="tablearea"><p class="empty">Loading the table…</p></div>';}
+  if(!G||G.code!==code){G=null;seenV=-1;unread=0;updateBadge();$('#gBody').innerHTML='<div class="tablearea"><p class="empty">Loading the table…</p></div>';}
 }
 function goHome(clearHash){
-  view='home';G=null;$('#game').hidden=true;$('#home').hidden=false;$('#psheet').hidden=true;$('#picker').hidden=true;
+  view='home';G=null;$('#game').hidden=true;$('#home').hidden=false;
+  $('#psheet').hidden=true;$('#picker').hidden=true;$('#chat').hidden=true;
   if(clearHash!==false) history.replaceState(null,'',location.pathname);
 }
 $('#backBtn').addEventListener('click',async()=>{
   const seated=G&&G.status!=='lobby'&&G.order.includes(G.me);
   const code=G&&G.code;
-  if(!seated) await send('leave');
+  if(!seated){await send('leave');store('lc-code','');}
   goHome(true);
   if(seated){away=true;$('#codeInp').value=code;toast('Your seat is saved. Tap Join to go back to table '+code+'.');}
 });
@@ -387,7 +511,34 @@ function floatEmoji(e,by){
   el.textContent=e;const s=document.createElement('small');s.textContent=by?nameOf(by):'';el.appendChild(s);
   document.body.appendChild(el);setTimeout(()=>el.remove(),2300);
 }
-$('#reacts').addEventListener('click',e=>{const b=e.target.closest('button');if(b)send('react',{e:b.dataset.e});});
+
+/* ---------- chat ---------- */
+function updateBadge(){const b=$('#chatBadge');b.hidden=!unread;b.textContent=unread>9?'9+':String(unread);}
+function renderChat(){
+  const box=$('#msgs');if(!box) return;
+  if(!chatMsgs.length){box.innerHTML='<p class="empty">No messages yet. Say hi, or tap a quick reply below.</p>';return;}
+  const me=G&&G.me;
+  box.innerHTML=chatMsgs.map(m=>{
+    const t=new Date(m.at);const hh=t.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+    return `<div class="msg ${m.by===me?'mine':''}">${m.by===me?'':`<span class="who">${esc(nameOf(m.by))}</span>`}<span class="txt">${esc(m.text)}</span><time>${esc(hh)}</time></div>`;
+  }).join('');
+  box.scrollTop=box.scrollHeight;
+}
+function openChat(){$('#chat').hidden=false;unread=0;updateBadge();renderChat();setTimeout(()=>{$('#msgs').scrollTop=1e6;},0);}
+$('#chatBtn').onclick=openChat;
+$('#chatClose').onclick=()=>{$('#chat').hidden=true;};
+$('#chat').addEventListener('click',e=>{if(e.target.id==='chat')$('#chat').hidden=true;});
+$('#chatForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const inp=$('#chatInp');const text=inp.value.trim();if(!text) return;
+  const r=await send('chat',{text});
+  if(r.ok) inp.value='';
+});
+$('#quick').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b) return;
+  if(b.dataset.e) send('react',{e:b.dataset.e});
+  else if(b.dataset.q) send('chat',{text:b.dataset.q});
+});
 
 function onState(s){
   if(away) return;
@@ -397,7 +548,12 @@ function onState(s){
   if(seenV>=0&&lg&&lg.v>seenV) toast(fmt(lg.msg),lg.kind);
   seenV=G.v||0;
   const mine=G.status==='playing'&&G.order[G.turn]===G.me;
-  if(prev&&mine&&!(prev.status==='playing'&&prev.order[prev.turn]===prev.me)) buzz();
+  const wasMine=prev&&prev.status==='playing'&&prev.order[prev.turn]===prev.me&&prev.round===G.round;
+  if(prev&&mine&&!wasMine){buzz();Snd.play('turn');scrollToPlayable=true;}
+  if(prev&&prev.status==='playing'&&G.status==='over'){
+    if(G.winner===G.me){Snd.play('win');confetti(90);}
+    else{Snd.play('roundover');confetti(40);}
+  }
   render();
 }
 
@@ -410,8 +566,14 @@ function render(){
 }
 
 function inviteLink(){return location.origin+location.pathname+'#'+G.code;}
+function hostWaitHTML(what){
+  const hn=esc(nameOf(G.host));
+  return `<div class="hostnote"><span>Waiting for ${hn} (host) to ${what}.</span>${isOnline(G.host)?'':`<span>${hn} looks offline.</span><button class="btn" data-claim="1">Take over as host</button>`}</div>`;
+}
+function wireClaim(root){root.querySelectorAll('[data-claim]').forEach(b=>b.onclick=()=>send('claimHost'));}
+
 function renderLobby(){
-  const ps=G.players;const st=G.settings||{};const wins=G.wins||{};
+  const ps=G.players;const st=G.settings||{};const wins=G.wins||{};const host=isHost();
   $('#gBody').innerHTML=`<div class="scroll">
     <div><p class="eyebrow">Table code</p><p class="bigcode">${esc(G.code)}</p></div>
     <div class="invite"><button class="btn primary" id="shareBtn">Invite friends</button><button class="btn" id="copyBtn">Copy link</button></div>
@@ -420,10 +582,11 @@ function renderLobby(){
       <ul class="plist">${ps.map(p=>`<li>${avatar(p.id)}<span class="nm">${esc(p.name)}${p.id===G.me?' <small>(you)</small>':''}${p.id===G.host?' <small>· host</small>':''}</span>${wins[p.id]?`<small>${wins[p.id]} win${wins[p.id]>1?'s':''}</small>`:''}</li>`).join('')}</ul>
     </section>
     <section class="panel"><h2>House rules</h2>
-      <button class="toggle" data-set="stack" aria-pressed="${!!st.stack}"><span class="sw"></span><span><b>Stack +2 and +4</b><span class="d">Answer a +2 with a +2 or +4, or a +4 with a +4. The first player who can’t draws the total.</span></span></button>
-      <button class="toggle" data-set="drawUntil" aria-pressed="${!!st.drawUntil}"><span class="sw"></span><span><b>Draw until you can play</b><span class="d">Keep drawing until a card fits, instead of drawing just one.</span></span></button>
+      ${host?'':'<p class="empty">Only the host can change these.</p>'}
+      <button class="toggle" data-set="stack" aria-pressed="${!!st.stack}" ${host?'':'disabled'}><span class="sw"></span><span><b>Stack +2 and +4</b><span class="d">Answer a +2 with a +2 or +4, or a +4 with a +4. The first player who can’t draws the total.</span></span></button>
+      <button class="toggle" data-set="drawUntil" aria-pressed="${!!st.drawUntil}" ${host?'':'disabled'}><span class="sw"></span><span><b>Draw until you can play</b><span class="d">Keep drawing until a card fits, instead of drawing just one.</span></span></button>
     </section>
-    <button class="btn primary" id="startBtn" ${ps.length<2?'disabled':''}>${ps.length<2?'Waiting for at least 2 players':'Deal the cards'}</button>
+    ${host?`<button class="btn primary" id="startBtn" ${ps.length<2?'disabled':''}>${ps.length<2?'Waiting for at least 2 players':'Deal the cards'}</button>`:hostWaitHTML('deal the cards')}
   </div>`;
   const link=inviteLink();
   $('#shareBtn').onclick=async()=>{
@@ -431,8 +594,9 @@ function renderLobby(){
     copyLink(link);
   };
   $('#copyBtn').onclick=()=>copyLink(link);
-  $('#gBody').querySelectorAll('.toggle').forEach(b=>b.onclick=()=>send('setting',{key:b.dataset.set}));
-  $('#startBtn').onclick=()=>send('start');
+  if(host) $('#gBody').querySelectorAll('.toggle').forEach(b=>b.onclick=()=>send('setting',{key:b.dataset.set}));
+  const sb=$('#startBtn');if(sb) sb.onclick=()=>send('start');
+  wireClaim($('#gBody'));
 }
 function copyLink(link){
   try{navigator.clipboard.writeText(link).then(()=>toast('Link copied. Paste it in your group chat.'),()=>toast(link));}catch(e){toast(link);}
@@ -449,6 +613,7 @@ function renderOpps(){
   }).join('');
 }
 
+let scrollToPlayable=false;
 function renderTable(){
   const prevScroll=$('#hand')?$('#hand').scrollLeft:0;
   const me=G.me;const seatedMe=G.order.includes(me);
@@ -484,31 +649,50 @@ function renderTable(){
       <div class="status"><span class="big ${myTurn?'mine':''}">${esc(big)}</span><span class="hint">${esc(hint)}</span></div>
     </div>
     <div class="actions" id="actions"></div>
-    ${seatedMe?`<div class="handwrap"><div class="handlabel"><span>Your hand · ${hand.length}</span><span>${G.wins[me]?G.wins[me]+'★ wins':''}</span></div><div class="hand" id="hand"></div></div>`
+    ${seatedMe?`<div class="handwrap" id="handwrap"><div class="handlabel"><span>Your hand · ${hand.length}</span><span id="swipeHint">${G.wins[me]?G.wins[me]+'★ wins':''}</span></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
       :`<div class="spect">You’re watching this round. You’ll be dealt in when the next round starts.</div>`}
     ${G.status==='over'?overHTML():''}`;
   renderOpps();renderActions();
   if(seatedMe) renderHand(hand,myTurn,prevScroll);
   $('#drawPile').onclick=()=>{if(G.status!=='playing')return;if(!myTurn){toast('Wait for your turn');return;}if(G.drew){toast('You already drew. Play it or pass.');return;}send('draw');};
   const nb=$('#nextBtn');if(nb)nb.onclick=()=>send('start');
+  wireClaim($('#gBody'));
 }
 
 function stateForRules(){return {discard:[G.top],color:G.color,pending:G.pending};}
+function updateHandEdges(){
+  const el=$('#hand'),wrap=$('#handwrap');if(!el||!wrap) return;
+  const max=el.scrollWidth-el.clientWidth;
+  const l=el.scrollLeft>4,r=el.scrollLeft<max-4;
+  wrap.classList.toggle('more-l',l);wrap.classList.toggle('more-r',r);
+  $('#scrL').hidden=!l;$('#scrR').hidden=!r;
+  const hint=$('#swipeHint');
+  if(hint&&max>4) hint.innerHTML='<span class="swipe">Swipe to see all your cards ↔</span>';
+}
 function renderHand(hand,myTurn,prevScroll){
   const el=$('#hand');const R=stateForRules();
   const idx=hand.map((c,i)=>i).sort((a,b)=>(CORD.indexOf(cc(hand[a]))-CORD.indexOf(cc(hand[b])))||(VORD.indexOf(cv(hand[a]))-VORD.indexOf(cv(hand[b]))));
   if(myTurn&&G.drew){const last=hand.length-1;idx.splice(idx.indexOf(last),1);idx.unshift(last);}
-  const w=window.innerWidth<370?68:78;
+  const w=window.innerWidth<370?70:80;
   el.innerHTML=idx.map(i=>{
     const c=hand[i];let cls='';
     if(myTurn&&G.status==='playing'){const ok=(!G.drew||i===hand.length-1)&&canPlay(c,R);cls=ok?'ok':'no';}
     if(myTurn&&G.drew&&i===hand.length-1) cls+=' fresh';
     return cardHTML(c,{w,tag:'button',cls,attrs:`data-i="${i}"`});
   }).join('');
+  // Show at least 60% of every card; if they still don't fit, the hand scrolls sideways.
   const avail=el.clientWidth-32;const n=idx.length;
-  let ov=6;if(n>1&&n*w+(n-1)*6>avail){ov=Math.max(-w*0.58,(avail-w)/(n-1)-w);}
+  let ov=6;if(n>1&&n*w+(n-1)*6>avail){ov=Math.max(-w*0.4,(avail-w)/(n-1)-w);}
   el.style.setProperty('--ov',ov+'px');
-  el.scrollLeft=prevScroll;
+  el.style.scrollBehavior='auto';el.scrollLeft=prevScroll;el.style.scrollBehavior='';
+  if(scrollToPlayable&&myTurn){
+    scrollToPlayable=false;
+    const first=el.querySelector('.card.ok');
+    if(first&&(first.offsetLeft<el.scrollLeft||first.offsetLeft+w>el.scrollLeft+el.clientWidth)) el.scrollLeft=Math.max(0,first.offsetLeft-24);
+  }
+  el.onscroll=updateHandEdges;updateHandEdges();
+  $('#scrL').onclick=()=>{el.scrollLeft-=el.clientWidth*0.7;};
+  $('#scrR').onclick=()=>{el.scrollLeft+=el.clientWidth*0.7;};
   el.onclick=e=>{
     const b=e.target.closest('.card');if(!b) return;
     const i=+b.dataset.i;const c=hand[i];
@@ -521,6 +705,7 @@ function renderHand(hand,myTurn,prevScroll){
     doPlay(i,null);
   };
 }
+window.addEventListener('resize',()=>{if(view==='game'&&G&&G.status!=='lobby')render();});
 async function doPlay(i,col){
   const r=await send('play',{i,color:col,called:armedCall});
   if(r.ok) armedCall=false;
@@ -559,24 +744,33 @@ function overHTML(){
     <p class="eyebrow">Round ${G.round||1} is over</p>
     <h3 class="win-name" id="winT">${esc(nameOf(G.winner))}${G.winner===G.me?' (you!)':''} wins</h3>
     <ul class="score">${ps.map(u=>`<li>${avatar(u)}<span class="nm">${esc(nameOf(u))}</span><span class="left">${count(u)?count(u)+' left':'out'}</span><span class="w">${G.wins[u]||0} ★</span></li>`).join('')}</ul>
-    <button class="btn primary" id="nextBtn">Deal the next round</button>
-    <p class="empty">Anyone who joined the table meanwhile gets dealt in.</p>
+    ${isHost()?`<button class="btn primary" id="nextBtn">Deal the next round</button><p class="empty">Anyone who joined the table meanwhile gets dealt in.</p>`:hostWaitHTML('deal the next round')}
   </div></div>`;
 }
 
 /* ---------- players sheet ---------- */
 $('#playersBtn').onclick=()=>{$('#psheet').hidden=false;renderPlayersSheet();};
 $('#psClose').onclick=()=>{$('#psheet').hidden=true;};
-$('#psLeave').onclick=async()=>{await send('leave');goHome(true);};
+$('#psLeave').onclick=async()=>{await send('leave');store('lc-code','');goHome(true);};
+$('#soundBtn').onclick=()=>{Snd.on=!Snd.on;store('lc-sound',Snd.on?'on':'off');$('#soundBtn').setAttribute('aria-pressed',String(Snd.on));if(Snd.on)Snd.play('turn');};
 function renderPlayersSheet(){
   if(!G) return;
+  const host=isHost();
+  $('#soundBtn').setAttribute('aria-pressed',String(Snd.on));
+  $('#psNote').textContent=host?'You’re the host: you deal each round. Removing someone puts their cards back in the deck.':'You can remove players who have gone offline so the game keeps moving.';
   $('#psList').innerHTML=G.players.map(p=>{
     const inRound=G.status!=='lobby'&&G.order.includes(p.id);
-    return `<li>${avatar(p.id)}<span class="nm">${esc(p.name)}${p.id===G.me?' <small>(you)</small>':''}<br><small>${p.online?'Online':'Offline'} · ${inRound?count(p.id)+' cards':'Waiting for next round'}</small></span>${p.id!==G.me?`<button class="btn small" data-rm="${esc(p.id)}">Remove</button>`:''}</li>`;
+    const btns=[];
+    if(p.id!==G.me&&host) btns.push(`<button class="btn small" data-host="${esc(p.id)}">Make host</button>`);
+    if(p.id!==G.me&&(host||!p.online)) btns.push(`<button class="btn small" data-rm="${esc(p.id)}">Remove</button>`);
+    return `<li>${avatar(p.id)}<span class="nm">${esc(p.name)}${p.id===G.me?' <small>(you)</small>':''}${p.id===G.host?' <small>· host</small>':''}<br><small>${p.online?'Online':'Offline'} · ${inRound?count(p.id)+' cards':'Waiting for next round'}</small></span>${btns.join('')}</li>`;
   }).join('');
-  $('#psList').onclick=e=>{const b=e.target.closest('[data-rm]');if(!b)return;b.disabled=true;send('remove',{id:b.dataset.rm});};
+  $('#psList').onclick=e=>{
+    const rm=e.target.closest('[data-rm]');if(rm){rm.disabled=true;send('remove',{id:rm.dataset.rm});return;}
+    const mh=e.target.closest('[data-host]');if(mh){mh.disabled=true;send('makeHost',{id:mh.dataset.host});}
+  };
 }
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('#picker').hidden=true;pendingWild=null;$('#psheet').hidden=true;}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('#picker').hidden=true;pendingWild=null;$('#psheet').hidden=true;$('#chat').hidden=true;}});
 window.addEventListener('hashchange',()=>{const c=hashCode();if(c&&(!G||G.code!==c)){$('#codeInp').value=c;if(myNick())joinTable(c);}});
 </script>
 </body>

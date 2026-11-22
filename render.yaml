@@ -7,3 +7,16 @@ services:
     startCommand: npm start
     healthCheckPath: /healthz
     autoDeploy: true
+    envVars:
+      - key: REDIS_URL
+        fromService:
+          name: last-card-store
+          type: keyvalue
+          property: connectionString
+
+  # Keeps every table saved while the game server redeploys or restarts.
+  - type: keyvalue
+    name: last-card-store
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: [] # only reachable from your Render services

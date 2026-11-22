@@ -1,7 +1,7 @@
 // Plays full games through the real server with simulated phones.
 process.env.PORT = 3999;
 process.env.RATE_LIMIT = 100000;
-const { server, tables } = require('../server.js');
+const { server, tables, ready } = require('../server.js');
 const { io } = require('socket.io-client');
 const E = require('../public/engine.js');
 const URL = 'http://localhost:3999';
@@ -18,6 +18,7 @@ function phone(name) {
 }
 
 (async () => {
+  await ready;
   const names = ['Ravi', 'Priya', 'Arjun', 'Meera', 'Zoya'];
   const phones = names.map(phone);
   await Promise.all(phones.map((p) => p.ready));
@@ -25,10 +26,16 @@ function phone(name) {
   for (const p of phones.slice(1)) { const r = await p.call('join', { code: c.code, name: p.name }); if (!r.ok) throw new Error('join ' + r.error); }
   const bad = await phones[1].call('join', { code: 'ZZZZ', name: 'x' });
   console.log('table', c.code, 'bad join msg:', bad.error);
-  await phones[2].call('setting', { key: 'drawUntil' });
+  const ns = await phones[2].call('setting', { key: 'drawUntil' }); if (ns.ok) throw new Error('non-host changed setting');
+  await phones[0].call('setting', { key: 'drawUntil' });
+  // chat
+  let heard = null; phones[3].s.on('chat', (m) => { heard = m; });
+  await phones[1].call('chat', { text: '  hello <b>table</b>  ' }); await sleep(30);
+  console.log('chat delivered:', JSON.stringify(heard && heard.text));
   let rounds = 0, moves = 0, catches = 0;
   while (rounds < 25) {
-    const st = await phones[rounds % 5].call('start');
+    if (rounds === 0) { const no = await phones[1].call('start'); if (no.ok) throw new Error('non-host started'); console.log('non-host start blocked:', no.error); }
+    const st = await phones[0].call('start');
     if (!st.ok) throw new Error('start failed');
     await sleep(30);
     let guard = 0;
@@ -66,6 +73,8 @@ function phone(name) {
   const back = io(URL, { transports: ['websocket'], forceNew: true });
   const r = await new Promise((res) => back.on('connect', () => back.emit('hello', { token: p.token }, res)));
   console.log('rejoined same table:', r.code === c.code);
+  // host goes offline: someone else can take over
+  const claimEarly = await phones[2].call('claimHost'); console.log('claim while host online blocked:', !claimEarly.ok);
   // remove a player mid-round
   await phones[0].call('start'); await sleep(30);
   const victim = phones[4].state.me;

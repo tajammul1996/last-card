@@ -12,14 +12,16 @@ A match-the-color multiplayer card game for 2–10 players, played on phones in 
 
 Every push to `main` redeploys automatically.
 
-**Free-tier note:** Render puts free services to sleep after about 15 minutes without visitors. The first person to open the link afterwards waits up to a minute while it wakes up. Tables live in memory, so a restart or sleep clears any game in progress.
+The blueprint also creates **last-card-store**, a free Render Key Value instance. The server saves every table there, so games carry on after a redeploy or restart: phones reconnect on their own and players keep their seats, hands and chat. Without `REDIS_URL` the server still runs, keeping tables in memory only.
+
+**Free-tier note:** Render puts free web services to sleep after about 15 minutes without visitors. The first person to open the link afterwards waits up to a minute while it wakes up.
 
 ## Run locally
 
 ```bash
 npm install
 npm start          # http://localhost:3000
-npm test           # plays 25 full rounds with 5 simulated phones
+npm test           # 25 full rounds with 5 simulated phones, then a restart test (needs redis-server)
 ```
 
 ## How it works
@@ -29,6 +31,14 @@ npm test           # plays 25 full rounds with 5 simulated phones
 - `public/index.html`: the phone client.
 
 Players are remembered by a random token in the browser, so refreshing or briefly losing signal puts you back in your seat.
+
+## Features
+
+- Only the host (whoever created the table) deals and changes house rules. The host can hand that role to someone else, and if the host goes offline anyone can take over.
+- Table chat with quick replies and emoji reactions.
+- A soft chime on your turn, a fanfare and confetti when a round is won, a pop for new messages. Players can turn sounds off under **Players**.
+- Big hands scroll sideways with at least 60% of every card visible.
+- When a new version is deployed, open phones show a **Refresh** banner, and a refresh puts you straight back in your seat.
 
 ## House rules
 

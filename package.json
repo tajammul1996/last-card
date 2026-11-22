@@ -5,10 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/play.test.js"
+    "test": "node test/play.test.js && node test/restart.test.js"
   },
   "license": "MIT",
   "dependencies": {
+    "redis": "^4.7.1",
     "socket.io": "^4.8.4"
   },
   "devDependencies": {
