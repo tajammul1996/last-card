@@ -1,0 +1,20 @@
+{
+  "name": "last-card",
+  "version": "1.0.0",
+  "description": "Last Card: a match-the-color multiplayer card game for phones",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/play.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
