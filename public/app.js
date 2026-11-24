@@ -42,6 +42,11 @@ const Snd = {
       else if (name === 'chat') { this.tone(1046.5, 0, 0.12, 'sine', 0.05); this.tone(1318.5, 0.06, 0.14, 'sine', 0.04); }
       else if (name === 'nudge') { this.tone(880, 0, 0.18, 'triangle', 0.08); this.tone(880, 0.22, 0.18, 'triangle', 0.08); }
       else if (name === 'win') { [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => this.tone(f, i * 0.12, 0.3, 'triangle', 0.14)); [523.25, 659.25, 783.99, 1046.5].forEach((f) => this.tone(f, 0.55, 1.3, 'triangle', 0.08)); this.tone(1318.5, 0.55, 1.3, 'sine', 0.05); }
+      else if (name === 'flick') { this.tone(1900, 0, 0.05, 'triangle', 0.035); }
+      else if (name === 'skip') { this.tone(196, 0, 0.2, 'sine', 0.13); this.tone(131, 0.05, 0.25, 'sine', 0.09); }
+      else if (name === 'reverse') { [440, 587.33, 783.99].forEach((f, i) => this.tone(f, i * 0.07, 0.22, 'sine', 0.05)); }
+      else if (name === 'wild') { [1046.5, 1318.5, 1568, 2093].forEach((f, i) => this.tone(f, i * 0.05, 0.35, 'sine', 0.032)); }
+      else if (name === 'thud') { this.tone(82, 0, 0.4, 'sine', 0.2); this.tone(130, 0, 0.16, 'triangle', 0.07); }
       else if (name === 'roundover') { [783.99, 987.77, 1174.66].forEach((f, i) => this.tone(f, i * 0.11, 0.45, 'triangle', 0.09)); }
     } catch (e) {}
   },
@@ -247,6 +252,22 @@ socket.on('connect_error', () => {
 // the server sends a table's state just before it confirms a join, so keep the latest per table
 const latest = {}, latestChat = {};
 socket.on('state', (s) => { if (!s) return; latest[s.code] = s; if (s.code === curCode) onState(s); });
+socket.on('ended', (m) => {
+  if (!m || m.code !== curCode) return;
+  curCode = null; G = null; setHash(''); showHome();
+  const meName = me && me.name;
+  const el = document.createElement('div'); el.className = 'sheet'; el.style.position = 'fixed'; el.style.zIndex = '50';
+  el.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="endT">
+    <span class="grab" aria-hidden="true"></span>
+    <div><p class="eyebrow">${m.by === meName ? 'You ended the game' : esc(m.by) + ' ended the game'} · ${m.rounds} round${m.rounds === 1 ? '' : 's'}</p><h2 id="endT">${m.standings[0] && m.standings[0].wins ? (m.standings[0].name === meName ? 'You won the game!' : esc(m.standings[0].name) + ' won the game!') : 'Game over'}</h2></div>
+    <ol class="standings">${m.standings.map((p) => `<li>${avatarFor(p.name.toLowerCase(), p.name, { size: 'sm' })}<span class="nm">${esc(p.name)}${p.name === meName ? ' (you)' : ''}</span><span class="w">${p.wins} ★</span></li>`).join('')}</ol>
+    <button class="btn gold block" style="min-height:54px">Done</button>
+  </div>`;
+  el.querySelector('button').onclick = () => el.remove();
+  el.addEventListener('click', (e) => { if (e.target === el) el.remove(); });
+  document.body.appendChild(el);
+  if (m.by !== meName) Snd.play('roundover');
+});
 socket.on('left', (m) => { if (m && m.code === curCode) { toast('You were removed from the table'); curCode = null; G = null; setHash(''); showHome(); } });
 socket.on('react', (m) => { if (m && m.code === curCode && view === 'game' && ['😂', '😱', '😤', '👏'].includes(m.e)) floatEmoji(m.e, m.by); });
 socket.on('recorded', (m) => { if (m && m.code === curCode) { recorded = m; if (G && G.status === 'over') render(); } });
@@ -488,9 +509,13 @@ function onState(s) {
   if (flipRing) revMark = { round: G.round, turnAt: G.turnAt };
   const sameRound = !!(prev && prev.status === 'playing' && G.status === 'playing' && prev.round === G.round);
   qAdvance = sameRound && !flipRing && prev.turn !== G.turn;
-  flyFrom = sameRound && G.pile > prev.pile && prev.order[prev.turn] !== G.me ? prev.order[prev.turn] : null;
+  const fx = sameRound ? fxFrom(prev) : null;
+  const from = fx && fx.played ? playedFromRect(fx.by) : null;
+  fxFlying = !!from && !reducedMotion();
   if (prev && prev.status === 'playing' && G.status === 'over') { if (G.winner === G.me) { Snd.play('win'); confetti(90); } else { Snd.play('roundover'); confetti(40); } }
   render();
+  fxFlying = false;
+  if (fx && view === 'game') runFx(fx, from);
 }
 function render() {
   if (view !== 'game' || !G) return;
@@ -585,6 +610,7 @@ function renderTable() {
   $('#drawPile').onclick = doDraw;
   const nb = $('#nextBtn'); if (nb) nb.onclick = () => send('start');
   const ob = $('#overBoard'); if (ob) ob.onclick = () => showBoard('game');
+  wireEnd();
   const nu = $('#nudgeBtn'); if (nu) nu.onclick = async () => { const r = await send('nudge'); if (r.ok) toast(`Nudged ${nameOf(G.host)}`); };
   wireClaim();
 }
@@ -609,21 +635,20 @@ function queueHTML(myTurn) {
   const revTag = playing && n > 2 && revMark && revMark.round === G.round && revMark.turnAt === G.turnAt;
   const badge = (u) => `<span class="qct ${count(u) === 1 ? 'one' : ''}" aria-label="${count(u)} cards">${count(u)}</span>`;
   const sub = (u) => (!isOnline(u) ? 'Offline' : count(u) === 1 && playing ? 'Last card' : '');
-  const items = shown.map((u) => `<li class="${u === G.me ? 'me' : ''} ${!isOnline(u) ? 'off' : ''}" aria-label="${u === G.me ? 'You' : esc(nameOf(u))}, ${count(u)} cards"><span class="qavw">${av(u, '', false)}${badge(u)}</span><span class="qn">${u === G.me ? 'You' : esc(nameOf(u))}</span><span class="qs ${count(u) === 1 ? 'warn' : ''}">${esc(sub(u))}</span></li>`).join('');
+  const items = shown.map((u) => `<li class="${u === G.me ? 'me' : ''} ${!isOnline(u) ? 'off' : ''}" data-u="${esc(u)}" aria-label="${u === G.me ? 'You' : esc(nameOf(u))}, ${count(u)} cards"><span class="qavw">${av(u, '', false)}${badge(u)}</span><span class="qn">${u === G.me ? 'You' : esc(nameOf(u))}</span><span class="qs ${count(u) === 1 ? 'warn' : ''}">${esc(sub(u))}</span></li>`).join('');
   const chip = more > 0 ? `<li class="chipli"><button class="qmore" id="qMore" aria-label="Show all ${n} players">+${more}</button></li>`
     : queueAll && ups.length > slots ? `<li class="chipli"><button class="qmore" id="qMore" aria-label="Show fewer">Less</button></li>` : '';
   const anim = flipRing ? 'flip' : qAdvance ? 'adv' : '';
   return `<section class="qstrip" aria-label="Turn order">
     <div class="qlabels"><span class="l1">Now</span><span class="l2">${n === 2 ? 'Then' : 'Up next'}</span>${revTag ? '<span class="qrev">⇄ Order reversed</span>' : ''}</div>
     <div class="qrow ${anim}">
-      <div class="qnow ${!isOnline(curU) ? 'off' : ''}" id="qNow"><span class="qavw">${av(curU, '', false)}${badge(curU)}</span><span class="qn">${curU === G.me ? 'You' : esc(nameOf(curU))}</span><span class="qs">${playing ? (myTurn ? 'Your turn' : isOnline(curU) ? `<span id="turnClock">${clockText(turnLeft())}</span> left` : 'Offline') : ''}</span></div>
+      <div class="qnow ${!isOnline(curU) ? 'off' : ''}" id="qNow" data-u="${esc(curU)}"><span class="qavw">${av(curU, '', false)}${badge(curU)}</span><span class="qn">${curU === G.me ? 'You' : esc(nameOf(curU))}</span><span class="qs">${playing ? (myTurn ? 'Your turn' : isOnline(curU) ? `<span id="turnClock">${clockText(turnLeft())}</span> left` : 'Offline') : ''}</span></div>
       <span class="qsep" aria-hidden="true"><svg width="12" height="16" viewBox="0 0 12 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2l6 6-6 6"/></svg></span>
       <ol class="qlist">${items}${chip}</ol>
     </div>
   </section>`;
 }
 function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) {
-  const fromEl = flyFrom ? $('#qNow .av') : null, fromRect = fromEl ? fromEl.getBoundingClientRect() : null;
   const top = G.top, cur = CVAR[G.color] || 'transparent', curU = G.order[G.turn], playing = G.status === 'playing';
   const cw = small ? 84 : 96, dw = small ? 74 : 84;
   let pill = '', note = '';
@@ -646,7 +671,7 @@ function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) 
         </div>
         <div class="pilecol discard-wrap">
           ${G.pending > 0 ? `<span class="stackb">+${G.pending}</span>` : ''}
-          <div class="discard" style="--cur:${cur}">${top ? cardHTML(top, { w: cw, cls: fresh && !fromRect ? 'pop' : '' }) : ''}</div>
+          <div class="discard" style="--cur:${cur}">${top ? cardHTML(top, { w: cw, cls: fresh && !fxFlying ? 'pop' : '' }) : ''}</div>
           <span class="curcol pilelbl" style="--cur:${cur}"><i></i>${COLORS[G.color] ? COLORS[G.color] + ' to match' : ''}</span>
         </div>
       </div>
@@ -656,29 +681,151 @@ function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) 
     ${seated ? `<div class="handwrap q" id="handwrap"><div class="hbar" role="status">${pill}<div class="actions" id="actions"></div></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
       : '<div class="spect">You’re watching this round. You’ll be dealt in when the next round starts.</div>'}
     ${G.status === 'over' ? overHTML() : ''}`;
-  lastTopV = G.v; flipRing = false; qAdvance = false; flyFrom = null;
+  lastTopV = G.v; flipRing = false; qAdvance = false;
   renderActions();
   if (seated) renderHand(hand, myTurn, prevScroll, R);
   $('#drawPile').onclick = doDraw;
   const qm = $('#qMore'); if (qm) qm.onclick = () => { queueAll = !queueAll; render(); };
   const nb = $('#nextBtn'); if (nb) nb.onclick = () => send('start');
   const ob = $('#overBoard'); if (ob) ob.onclick = () => showBoard('game');
+  wireEnd();
   const nu = $('#nudgeBtn'); if (nu) nu.onclick = async () => { const r = await send('nudge'); if (r.ok) toast(`Nudged ${nameOf(G.host)}`); };
   wireClaim();
-  if (fromRect) flyCard(fromRect);
 }
-// the card someone just played flies from their avatar in the queue onto the pile
-function flyCard(from) {
-  const to = $('.qcenter .discard .card');
-  if (!to || !to.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const r = to.getBoundingClientRect();
-  const ghost = to.cloneNode(true);
+/* ---------- card effects ----------
+   Worked out from what changed between two states, so they look the same for everyone.
+   Every played card flies from the player to the pile; Skip, Reverse, Wild, +2 and +4 add one move that
+   shows who it hits. Each plays once, never blocks a tap, and is skipped when the phone asks for less motion. */
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+function fxFrom(prev) {
+  const played = (G.pile || 0) > (prev.pile || 0);
+  const by = prev.order[prev.turn];
+  const draws = {};
+  for (const u of G.order) { const d = ((G.counts || {})[u] || 0) - ((prev.counts || {})[u] || 0); if (d > 0 && !(played && u === by)) draws[u] = d; }
+  const n = prev.order.length, step = prev.dir === -1 ? -1 : 1;
+  return { played, by, card: played ? G.top : null, draws, next: prev.order[mod(prev.turn + step, n)] };
+}
+function avEl(u) { return $(`#gMain [data-u="${CSS.escape(u)}"] .av`); }
+function centerOf(r) { return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+function playedFromRect(u) {
+  if (u === G.me) {
+    if (lastTap && Date.now() - lastTap.at < 20000) return lastTap.rect;
+    const h = $('#hand'); return h ? h.getBoundingClientRect() : null;
+  }
+  const a = avEl(u); return a ? a.getBoundingClientRect() : null;
+}
+// where cards for player u should land: your hand for you, otherwise their picture
+function targetRect(u) {
+  if (u === G.me) { const h = $('#hand'); if (h) { const r = h.getBoundingClientRect(); return { left: r.right - 90, top: r.top + 10, width: 70, height: r.height - 20 }; } }
+  const a = avEl(u); return a ? a.getBoundingClientRect() : null;
+}
+function fxLayer(html, x, y, w, h) {
+  const el = document.createElement('div'); el.className = 'fxl'; el.innerHTML = html || '';
+  Object.assign(el.style, { left: x - w / 2 + 'px', top: y - h / 2 + 'px', width: w + 'px', height: h + 'px' });
+  document.body.appendChild(el); return el;
+}
+function runFx(fx, from) {
+  if (reducedMotion() || !document.body.animate) return;
+  const pile = $('#gMain .discard .card'), drawEl = $('#drawPile');
+  const v = fx.card ? cv(fx.card) : '', wild = fx.card ? cc(fx.card) === 'w' : false, heavy = v === 'F';
+  const land = fx.played && pile && from ? 420 : 0;
+  if (fx.played && pile && from) flyIn(pile, from, heavy);
+  if (fx.played && pile) {
+    setTimeout(() => {
+      const p = $('#gMain .discard .card') || pile; const c = centerOf(p.getBoundingClientRect());
+      if (heavy) { shakeTable(); Snd.play('thud'); }
+      if (v === 'S') { shock(c, CVAR[cc(fx.card)]); stampOn(fx.next, c); Snd.play('skip'); }
+      else if (v === 'R') {
+        p.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(180deg)' }], { duration: 450, easing: 'ease-in-out' });
+        if (G.order.length > 2) orbit(c); else stampOn(fx.next, c);
+        Snd.play(G.order.length > 2 ? 'reverse' : 'skip');
+      }
+      if (wild) {
+        const o = p.querySelector('.oval');
+        if (o) o.animate([{ transform: 'rotate(26deg) scaleX(.86)' }, { transform: 'rotate(746deg) scaleX(.86)' }], { duration: 800, easing: 'cubic-bezier(.2,.6,.2,1)' });
+        setTimeout(() => wash(c, CVAR[G.color]), heavy ? 120 : 520);
+        if (!heavy) Snd.play('wild');
+      }
+    }, land);
+  }
+  // cards drawn: fly backs from the draw pile to whoever took them
+  const after = fx.played && (v === 'D' || v === 'F') ? land + (heavy ? 650 : 250) : land;
+  Object.entries(fx.draws).forEach(([u, k]) => {
+    const hit = fx.played && (v === 'D' || v === 'F') && u === fx.next;
+    tossTo(u, k, drawEl, after, () => {
+      bump(u);
+      if (hit) { stampOn(u, null); if (u === G.me) buzz(); }
+    });
+  });
+}
+function flyIn(pile, from, heavy) {
+  const r = pile.getBoundingClientRect();
+  const ghost = pile.cloneNode(true);
   Object.assign(ghost.style, { position: 'fixed', left: r.left + 'px', top: r.top + 'px', margin: '0', zIndex: '40', pointerEvents: 'none' });
-  document.body.appendChild(ghost); to.style.visibility = 'hidden';
-  const dx = from.left + from.width / 2 - (r.left + r.width / 2), dy = from.top + from.height / 2 - (r.top + r.height / 2);
-  const a = ghost.animate([{ transform: `translate(${dx}px,${dy}px) scale(.35) rotate(-20deg)`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: 'cubic-bezier(.2,.7,.3,1)' });
-  const done = () => { ghost.remove(); to.style.visibility = ''; };
+  document.body.appendChild(ghost); pile.style.visibility = 'hidden';
+  const a0 = centerOf(from), b0 = centerOf(r), s0 = Math.max(0.3, Math.min(1, from.width / r.width));
+  const a = ghost.animate([
+    { transform: `translate(${a0.x - b0.x}px,${a0.y - b0.y}px) scale(${s0}) rotate(-18deg)`, opacity: 0.7 },
+    { transform: `scale(${heavy ? 1.14 : 1.05})`, opacity: 1, offset: 0.8 },
+    { transform: 'none', opacity: 1 }], { duration: heavy ? 480 : 420, easing: 'cubic-bezier(.2,.7,.3,1)' });
+  const done = () => { ghost.remove(); pile.style.visibility = ''; };
   a.onfinish = done; a.oncancel = done;
+}
+function shakeTable() {
+  const m = $('#gMain'); if (!m) return;
+  m.animate([{ transform: 'none' }, { transform: 'translate(-6px,3px)' }, { transform: 'translate(6px,-3px)' }, { transform: 'translate(-4px,2px)' }, { transform: 'translate(3px,-1px)' }, { transform: 'none' }], { duration: 280, easing: 'linear' });
+}
+function shock(c, color) {
+  const el = fxLayer('', c.x, c.y, 150, 150); el.classList.add('fx-shock'); el.style.borderColor = color;
+  el.animate([{ transform: 'scale(.35)', opacity: 0.95 }, { transform: 'scale(2)', opacity: 0 }], { duration: 450, easing: 'ease-out' }).onfinish = () => el.remove();
+}
+function orbit(c) {
+  const el = fxLayer(`<svg viewBox="0 0 200 200" width="100%" height="100%"><path d="M 104 8 A 92 92 0 0 1 192 100" fill="none" stroke="#ffc94a" stroke-width="4" stroke-linecap="round"/><polygon points="90,8 105,0 105,16" fill="#ffc94a"/><path d="M 96 192 A 92 92 0 0 1 8 100" fill="none" stroke="#ffc94a" stroke-width="4" stroke-linecap="round"/><polygon points="110,192 95,184 95,200" fill="#ffc94a"/></svg>`, c.x, c.y, 200, 200);
+  el.animate([{ transform: 'rotate(0)', opacity: 0 }, { opacity: 1, offset: 0.12 }, { transform: 'rotate(-300deg)', opacity: 1, offset: 0.8 }, { transform: 'rotate(-360deg)', opacity: 0 }], { duration: 750, easing: 'ease-in-out' }).onfinish = () => el.remove();
+}
+function wash(c, color) {
+  const el = fxLayer('', c.x, c.y, 200, 200); el.classList.add('fx-wash'); el.style.setProperty('--wc', color);
+  el.animate([{ transform: 'scale(.2)', opacity: 0.6 }, { transform: 'scale(5)', opacity: 0 }], { duration: 700, easing: 'ease-out' }).onfinish = () => el.remove();
+}
+// a red ⊘ lands on the player who misses their turn, and they grey out for a moment
+function stampOn(u, fromC) {
+  const own = avEl(u), alt = u === G.me ? $('.hbar .pill') : null;
+  const tr = own ? own.getBoundingClientRect() : alt ? alt.getBoundingClientRect() : null; if (!tr) return;
+  const t = own ? centerOf(tr) : { x: tr.right + 22, y: tr.top + tr.height / 2 };
+  const el = fxLayer('<span class="fx-stamp"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><path d="M5 15L15 5"/></svg></span><span class="fx-skipped">Skipped</span>', t.x, t.y, 34, 34);
+  const f = fromC || { x: t.x, y: t.y - 40 };
+  el.animate([{ transform: `translate(${f.x - t.x}px,${f.y - t.y}px) scale(1.8)`, opacity: 0 }, { opacity: 1, offset: 0.15 }, { transform: 'scale(.9)', opacity: 1, offset: 0.8 }, { transform: 'none', opacity: 1 }], { duration: fromC ? 420 : 300, easing: 'cubic-bezier(.2,.7,.3,1)' });
+  const a = avEl(u); if (a) a.classList.add('fx-dim');
+  setTimeout(() => {
+    el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 300 }).onfinish = () => el.remove();
+    const b = avEl(u); if (b) b.classList.remove('fx-dim');
+  }, 1500);
+}
+function tossTo(u, k, drawEl, delay, onDone) {
+  if (!drawEl) return;
+  const n = Math.min(k, 6);
+  for (let i = 0; i < n; i++) {
+    setTimeout(() => {
+      const tr = targetRect(u), src = drawEl.getBoundingClientRect(); if (!tr) return;
+      const a0 = centerOf(src), b0 = centerOf(tr);
+      const el = fxLayer('<span class="fx-back"><i></i></span>', a0.x, a0.y, 30, 45);
+      Snd.play('flick');
+      el.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${b0.x - a0.x}px,${b0.y - a0.y}px) scale(.6) rotate(14deg)`, opacity: 1, offset: 0.9 }, { transform: `translate(${b0.x - a0.x}px,${b0.y - a0.y}px) scale(.5) rotate(14deg)`, opacity: 0 }], { duration: 380, easing: 'cubic-bezier(.3,.6,.3,1)' }).onfinish = () => { el.remove(); if (i === n - 1 && onDone) onDone(); };
+    }, delay + i * 110);
+  }
+}
+function bump(u) {
+  const b = $(`#gMain [data-u="${CSS.escape(u)}"] .qct`) || $(`#gMain [data-u="${CSS.escape(u)}"] .ct`);
+  if (b && b.animate) b.animate([{ transform: 'scale(1)', background: 'var(--red)', color: '#fff' }, { transform: 'scale(1.45)', background: 'var(--red)', color: '#fff', offset: 0.3 }, { transform: 'scale(1)' }], { duration: 650, easing: 'ease-out' });
+}
+function wireEnd() {
+  const b = $('#endBtn'); if (!b) return;
+  let armed = false, timer = null;
+  b.onclick = async () => {
+    if (!armed) { armed = true; b.textContent = 'Tap again to end'; b.classList.add('call'); timer = setTimeout(() => { armed = false; b.textContent = 'End game'; b.classList.remove('call'); }, 3000); return; }
+    clearTimeout(timer); b.disabled = true;
+    const r = await send('endGame'); if (!r.ok) { b.disabled = false; toast(r.error || 'Couldn’t end the game'); }
+  };
 }
 function doDraw() {
   if (!G || G.status !== 'playing') return;
@@ -692,7 +839,7 @@ function updateHandEdges() {
   wrap.classList.toggle('more-l', l); wrap.classList.toggle('more-r', r);
   $('#scrL').hidden = !l; $('#scrR').hidden = !r;
 }
-let handOrder = [], flipRing = false, revMark = null, qAdvance = false, flyFrom = null, queueAll = false;
+let handOrder = [], flipRing = false, revMark = null, qAdvance = false, queueAll = false, fxFlying = false, lastTap = null;
 /* Seats sit on an ellipse in play order, you at the bottom. Seats never move when play reverses;
    only the flow of the ring and the arrow towards the next player change direction. */
 function ringHTML(cw, dw, myTurn) {
@@ -705,7 +852,7 @@ function ringHTML(cw, dw, myTurn) {
     const k = mod(idx - base, n), p = pos(k), c = count(u), isMe = u === G.me;
     const cls = ['seat', playing && u === curU ? 'turn' : '', playing && u === nextU && u !== curU ? 'next' : '', playing && c === 1 ? 'one' : '', !isOnline(u) ? 'off' : '', isMe ? 'me' : ''].join(' ');
     const sub = !isOnline(u) ? 'Offline' : playing && u === curU ? (isMe ? 'Your turn' : 'Playing') : playing && u === nextU ? 'Next' : playing && c === 1 ? 'Last card!' : G.wins[u] ? G.wins[u] + '★' : '';
-    return `<div class="${cls}" style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%"><span class="avw">${av(u, '', false)}<span class="ct" aria-label="${c} cards">${c}</span></span><span class="nm">${isMe ? 'You' : esc(nameOf(u))}</span><span class="sub">${esc(sub)}</span></div>`;
+    return `<div class="${cls}" data-u="${esc(u)}" style="left:${p.x.toFixed(2)}%;top:${p.y.toFixed(2)}%"><span class="avw">${av(u, '', false)}<span class="ct" aria-label="${c} cards">${c}</span></span><span class="nm">${isMe ? 'You' : esc(nameOf(u))}</span><span class="sub">${esc(sub)}</span></div>`;
   }).join('');
   let chev = '';
   if (playing && n > 1) {
@@ -727,7 +874,7 @@ function ringHTML(cw, dw, myTurn) {
         <button class="drawpile ${myTurn && !G.drew ? 'can' : ''}" id="drawPile" aria-label="Draw a card${isWide() ? ' (D)' : ''}, ${G.deckCount} left" style="width:${dw + 6}px;height:${Math.round(dw * 1.52) + 6}px">${backHTML(dw, 'shadow')}${backHTML(dw)}</button>
         <div class="discard-wrap">
           ${G.pending > 0 ? `<span class="stackb">+${G.pending}</span>` : ''}
-          <div class="discard" style="--cur:${cur}">${top ? cardHTML(top, { w: cw, cls: lastTopV !== G.v ? 'pop' : '' }) : ''}</div>
+          <div class="discard" style="--cur:${cur}">${top ? cardHTML(top, { w: cw, cls: lastTopV !== G.v && !fxFlying ? 'pop' : '' }) : ''}</div>
         </div>
       </div>
       <span class="dirlbl"><span class="curcol" style="--cur:${cur}"><i></i>${COLORS[G.color] || ''}</span>· ${G.dir === 1 ? '↻ clockwise' : '↺ anticlockwise'}</span>
@@ -772,6 +919,7 @@ function tryPlay(i, el) {
     if (el) { el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); }
     toast(G.drew ? 'You can only play the card you just drew' : G.pending > 0 ? 'Stack a draw card or take the cards' : 'That card doesn’t match'); return;
   }
+  if (el) lastTap = { rect: el.getBoundingClientRect(), at: Date.now() };
   if (cc(c) === 'w') { pendingWild = { i }; closeSheets(); $('#picker').hidden = false; $('#picker button[data-col]').focus(); return; }
   doPlay(i, null);
 }
@@ -812,7 +960,7 @@ function overHTML() {
     <div class="over-head">${av(G.winner, 'md')}<div><p class="eyebrow">Round ${G.round || 1} is over</p><h2 id="winT">${G.winner === G.me ? 'You win!' : esc(nameOf(G.winner)) + ' wins!'}</h2></div></div>
     ${rec ? `<div class="gold-box" style="display:flex;align-items:center;gap:10px;font-size:14px">${ICON.trophy}<span>+1 win for ${G.winner === G.me ? 'you' : esc(nameOf(G.winner))}${rec.rank ? ` · now <b>#${rec.rank}</b> on the leaderboard` : ''}</span></div>` : ''}
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
-    ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal the next round</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><button class="btn" id="overBoard">Leaderboard</button>`
+    ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal the next round</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
       : `${isOnline(G.host) ? `<p class="note" style="text-align:center;color:var(--soft)">Waiting for <b style="color:var(--ink)">${esc(nameOf(G.host))}</b> (host) to deal the next round</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="nudgeBtn">Nudge ${esc(nameOf(G.host))}</button><button class="btn light" id="overBoard">Leaderboard</button></div>` : `${hostWaitHTML('deal')}<button class="btn" id="overBoard">Leaderboard</button>`}`}
   </div></div>`;
 }
