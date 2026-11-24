@@ -445,16 +445,16 @@ io.on('connection', (socket) => {
     if (seated.length < 2) return ack({ ok: false, error: 'You need at least 2 players.' });
     ack({ ok: act(c.t, (s) => { if (s.status === 'playing') return false; E.dealRound(s, seated); }) });
   });
-  // the host can close the table between rounds: everyone sees the final standings and goes home
+  // the host can close the table at any time (anyone can when the host has gone offline):
+  // everyone sees the standings and goes home
   on('endGame', (_, ack) => {
     const c = ctx(); if (!c) return ack({ ok: false });
-    if (!hostOnly(c, ack)) return;
     const t = c.t;
-    if (t.s.status === 'playing') return ack({ ok: false, error: 'Finish the round first.' });
+    if (!c.isHost && isOnline(t.players.get(t.s.host))) return ack({ ok: false, error: 'Only the host can end the game.' });
     const wins = t.s.wins || {};
     const standings = [...t.players.values()].sort((a, b) => (wins[b.id] || 0) - (wins[a.id] || 0) || a.joined - b.joined)
       .map((p) => ({ name: p.name, wins: wins[p.id] || 0 }));
-    const msg = { code: t.code, by: c.p.name, rounds: t.s.round || 0, standings };
+    const msg = { code: t.code, by: c.p.name, rounds: t.s.round || 0, midRound: t.s.status === 'playing', standings };
     for (const p of t.players.values()) {
       forget(t, p);
       for (const sid of p.sockets) {

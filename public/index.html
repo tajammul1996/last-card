@@ -408,6 +408,13 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .handwrap.q::before,.handwrap.q::after{top:60px}
 .handwrap.q .hand{padding-top:16px}
 /* card effects (fixed layers over the table; never catch taps) */
+/* round over: chat stays reachable */
+.chatpeek{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:8px 12px;border-radius:14px;background:rgba(245,239,227,.06);border:1px solid var(--line);text-align:left;color:var(--ink)}
+.chatpeek .tx{flex:1;min-width:0;font-size:14px;color:var(--soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chatpeek .tx b{color:var(--ink)}
+.chatpeek .go{display:flex;align-items:center;gap:6px;font-weight:800;font-size:14px;color:var(--gold)}
+.chatpeek .go i{font-style:normal;min-width:20px;height:20px;padding:0 5px;border-radius:99px;background:var(--red);color:#fff;font-size:11px;display:grid;place-items:center}
+.chat.open{z-index:50}
 .fxl{position:fixed;z-index:45;pointer-events:none;display:grid;place-items:center}
 .fx-shock{border-radius:50%;border:5px solid var(--gold);box-sizing:border-box}
 .fx-wash{border-radius:50%;background:radial-gradient(circle,var(--wc) 0%,var(--wc) 35%,transparent 70%)}
@@ -453,6 +460,8 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
   .hcard{margin-left:0}
   .scrollbtn{display:none}
   .sheet{align-items:center}
+  #gMain .sheet{right:360px}
+  .chatpeek{display:none}
   .sheet-card{border-radius:24px;max-width:520px}
   .board-head h1{font-size:48px}
   .board-filters{flex-direction:row;align-items:center;justify-content:space-between}
@@ -613,6 +622,8 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
       <button class="btn danger" id="menuLeave">Leave table</button>
     </div>
     <p class="note">Back to home keeps your seat. Leave table gives it up.</p>
+    <button class="btn danger block" id="menuEnd" hidden>End game for everyone</button>
+    <p class="note" id="menuEndNote" hidden></p>
   </div>
 </div>
 

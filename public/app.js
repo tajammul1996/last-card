@@ -254,12 +254,12 @@ const latest = {}, latestChat = {};
 socket.on('state', (s) => { if (!s) return; latest[s.code] = s; if (s.code === curCode) onState(s); });
 socket.on('ended', (m) => {
   if (!m || m.code !== curCode) return;
-  curCode = null; G = null; setHash(''); showHome();
+  curCode = null; G = null; setHash(''); closeSheets(); $('#chat').classList.remove('open'); showHome();
   const meName = me && me.name;
   const el = document.createElement('div'); el.className = 'sheet'; el.style.position = 'fixed'; el.style.zIndex = '50';
   el.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="endT">
     <span class="grab" aria-hidden="true"></span>
-    <div><p class="eyebrow">${m.by === meName ? 'You ended the game' : esc(m.by) + ' ended the game'} · ${m.rounds} round${m.rounds === 1 ? '' : 's'}</p><h2 id="endT">${m.standings[0] && m.standings[0].wins ? (m.standings[0].name === meName ? 'You won the game!' : esc(m.standings[0].name) + ' won the game!') : 'Game over'}</h2></div>
+    <div><p class="eyebrow">${m.by === meName ? 'You ended the game' : esc(m.by) + ' ended the game'}${m.midRound ? ` during round ${m.rounds}` : ` after ${m.rounds} round${m.rounds === 1 ? '' : 's'}`}</p><h2 id="endT">${m.standings[0] && m.standings[0].wins ? (m.standings[0].name === meName ? 'You won the game!' : esc(m.standings[0].name) + ' won the game!') : 'Game over'}</h2></div>
     <ol class="standings">${m.standings.map((p) => `<li>${avatarFor(p.name.toLowerCase(), p.name, { size: 'sm' })}<span class="nm">${esc(p.name)}${p.name === meName ? ' (you)' : ''}</span><span class="w">${p.wins} ★</span></li>`).join('')}</ol>
     <button class="btn gold block" style="min-height:54px">Done</button>
   </div>`;
@@ -460,6 +460,11 @@ function renderMenu() {
   $('#menuTitle').textContent = 'Table ' + G.code;
   $('#soundBtn').setAttribute('aria-pressed', String(Snd.on));
   $('#menuNote').textContent = host ? 'You’re the host: you deal each round and can remove players.' : 'You can remove players who have gone offline so the game keeps moving.';
+  const canEnd = host || !isOnline(G.host);
+  const eb = $('#menuEnd'); eb.hidden = !canEnd;
+  if (canEnd && !eb.dataset.wired) { eb.dataset.wired = '1'; wireEnd(eb); }
+  $('#menuEndNote').hidden = !canEnd;
+  $('#menuEndNote').textContent = host ? 'Ends the game for everyone, even mid-round. Wins so far are kept on the leaderboard.' : `${nameOf(G.host)} (host) is offline, so you can end the game for everyone.`;
   $('#menuPlayers').innerHTML = G.players.map((p) => {
     const inRound = G.status !== 'lobby' && G.order.includes(p.id);
     const btns = [];
@@ -474,7 +479,7 @@ $('#menuPlayers').addEventListener('click', (e) => {
 });
 
 /* ---------- chat ---------- */
-function updateBadge() { const b = $('#chatBadge'); b.hidden = !unread; b.textContent = unread > 9 ? '9+' : String(unread); $('#chatBtn').setAttribute('aria-label', unread ? `Open chat, ${unread} unread` : 'Open chat'); }
+function updateBadge() { refreshPeek(); const b = $('#chatBadge'); b.hidden = !unread; b.textContent = unread > 9 ? '9+' : String(unread); $('#chatBtn').setAttribute('aria-label', unread ? `Open chat, ${unread} unread` : 'Open chat'); }
 function renderChat() {
   const box = $('#msgs');
   if (!chatMsgs.length) { box.innerHTML = '<p class="note" style="margin:auto 0 0">No messages yet. Say hi, or tap a quick reply below.</p>'; return; }
@@ -486,7 +491,16 @@ function renderChat() {
   }).join('');
   box.scrollTop = box.scrollHeight;
 }
-$('#chatBtn').onclick = () => { closeSheets(); $('#chat').classList.add('open'); unread = 0; updateBadge(); renderChat(); setTimeout(() => { $('#msgs').scrollTop = 1e6; }, 0); };
+function openChat() { closeSheets(); $('#chat').classList.add('open'); unread = 0; updateBadge(); renderChat(); setTimeout(() => { $('#msgs').scrollTop = 1e6; $('#chatInp').focus({ preventScroll: true }); }, 0); }
+$('#chatBtn').onclick = openChat;
+// on the round-over sheet: the newest message, so people can sort out "one more?" without hunting for chat
+const ICON_CHAT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z"/></svg>';
+function chatPeekHTML() {
+  const last = chatMsgs.filter((m) => !m.sys).slice(-1)[0];
+  const text = last ? `<b>${esc(last.by === (G && G.me) ? 'You' : nameOf(last.by))}:</b> ${esc(last.text)}` : 'One more round? Ask the table';
+  return `<button class="chatpeek" id="overChat" aria-label="Open chat">${ICON_CHAT}<span class="tx">${text}</span><span class="go">Chat${unread ? ` <i>${unread > 9 ? '9+' : unread}</i>` : ''}</span></button>`;
+}
+function refreshPeek() { const p = $('#overChat'); if (p) { p.outerHTML = chatPeekHTML(); const q = $('#overChat'); if (q) q.onclick = openChat; } }
 $('#chatClose').onclick = () => $('#chat').classList.remove('open');
 $('#chatForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -818,13 +832,17 @@ function bump(u) {
   const b = $(`#gMain [data-u="${CSS.escape(u)}"] .qct`) || $(`#gMain [data-u="${CSS.escape(u)}"] .ct`);
   if (b && b.animate) b.animate([{ transform: 'scale(1)', background: 'var(--red)', color: '#fff' }, { transform: 'scale(1.45)', background: 'var(--red)', color: '#fff', offset: 0.3 }, { transform: 'scale(1)' }], { duration: 650, easing: 'ease-out' });
 }
-function wireEnd() {
-  const b = $('#endBtn'); if (!b) return;
-  let armed = false, timer = null;
+function wireEnd(b) {
+  b = b || $('#endBtn');
+  const peek = $('#overChat'); if (peek) peek.onclick = openChat;
+  if (!b) return;
+  let armed = false, timer = null; const label = b.textContent;
   b.onclick = async () => {
-    if (!armed) { armed = true; b.textContent = 'Tap again to end'; b.classList.add('call'); timer = setTimeout(() => { armed = false; b.textContent = 'End game'; b.classList.remove('call'); }, 3000); return; }
+    if (!armed) { armed = true; b.textContent = 'Tap again to end for everyone'; b.classList.add('call'); timer = setTimeout(() => { armed = false; b.textContent = label; b.classList.remove('call'); }, 3000); return; }
     clearTimeout(timer); b.disabled = true;
-    const r = await send('endGame'); if (!r.ok) { b.disabled = false; toast(r.error || 'Couldn’t end the game'); }
+    const r = await send('endGame');
+    armed = false; b.disabled = false; b.textContent = label; b.classList.remove('call');
+    if (!r.ok) toast(r.error || 'Couldn’t end the game');
   };
 }
 function doDraw() {
@@ -959,6 +977,7 @@ function overHTML() {
     <span class="grab" aria-hidden="true"></span>
     <div class="over-head">${av(G.winner, 'md')}<div><p class="eyebrow">Round ${G.round || 1} is over</p><h2 id="winT">${G.winner === G.me ? 'You win!' : esc(nameOf(G.winner)) + ' wins!'}</h2></div></div>
     ${rec ? `<div class="gold-box" style="display:flex;align-items:center;gap:10px;font-size:14px">${ICON.trophy}<span>+1 win for ${G.winner === G.me ? 'you' : esc(nameOf(G.winner))}${rec.rank ? ` · now <b>#${rec.rank}</b> on the leaderboard` : ''}</span></div>` : ''}
+    ${chatPeekHTML()}
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
     ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal the next round</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
       : `${isOnline(G.host) ? `<p class="note" style="text-align:center;color:var(--soft)">Waiting for <b style="color:var(--ink)">${esc(nameOf(G.host))}</b> (host) to deal the next round</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="nudgeBtn">Nudge ${esc(nameOf(G.host))}</button><button class="btn light" id="overBoard">Leaderboard</button></div>` : `${hostWaitHTML('deal')}<button class="btn" id="overBoard">Leaderboard</button>`}`}
