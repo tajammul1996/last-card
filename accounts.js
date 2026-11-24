@@ -78,27 +78,65 @@ function hashPin(pin, salt) { return crypto.scryptSync(String(pin), salt, 32).to
 /**
  * Sign in, or claim a new name. Returns { ok, session, name, created } or { ok:false, error }.
  */
-async function login(rawName, pin) {
+const NAME_ERR = 'Use 2–18 letters or numbers (spaces, dots and dashes are fine).';
+
+/** Free names close to the one asked for, e.g. "John" -> "John R", "John 7", "Johnny". */
+async function suggestNames(name, n = 3) {
+  const base = name.split(' ')[0].slice(0, 14);
+  const letters = 'ABCDEFGHJKLMNPRSTVW';
+  const pool = [
+    `${base} ${letters[crypto.randomInt(letters.length)]}`, `${base} ${crypto.randomInt(2, 99)}`,
+    `${base} ${letters[crypto.randomInt(letters.length)]}`,
+    `${base}_${crypto.randomInt(10, 99)}`, `${base} ${crypto.randomInt(100, 999)}`,
+  ];
+  const out = [];
+  for (const c of pool) {
+    if (out.length >= n) break;
+    if (!NAME_RE.test(c) || out.some((o) => keyOf(o) === keyOf(c))) continue;
+    if (!(await get(K.acct(keyOf(c))))) out.push(c);
+  }
+  return out;
+}
+
+/** Live check while someone types: is the name valid, and is it free? */
+async function checkName(rawName) {
   const name = cleanName(rawName);
-  if (!NAME_RE.test(name)) return { ok: false, error: 'Use 2–18 letters or numbers for your name.' };
+  if (!NAME_RE.test(name)) return { ok: true, valid: false, error: NAME_ERR };
+  const acct = await get(K.acct(keyOf(name)));
+  if (!acct) return { ok: true, valid: true, available: true, name };
+  return { ok: true, valid: true, available: false, name: acct.name, suggestions: await suggestNames(acct.name) };
+}
+
+/**
+ * mode 'new': claim a name that nobody has (names are unique, ignoring case and extra spaces).
+ * mode 'back': sign in to an existing name with its PIN.
+ * Returns { ok, session, key, name, created } or { ok:false, error, taken?, notFound?, suggestions? }.
+ */
+async function login(rawName, pin, mode) {
+  const name = cleanName(rawName);
+  if (!NAME_RE.test(name)) return { ok: false, error: NAME_ERR };
   if (!/^\d{4}$/.test(String(pin || ''))) return { ok: false, error: 'Your PIN is 4 digits.' };
   const key = keyOf(name);
   const fails = (await get(K.fail(key))) || 0;
   if (fails >= LOCK_AFTER) return { ok: false, error: `Too many wrong PINs for ${name}. Try again in 10 minutes.` };
   let acct = await get(K.acct(key));
   let created = false;
-  if (!acct) {
+  if (mode === 'new') {
+    if (acct) return { ok: false, taken: true, error: `“${acct.name}” is already taken. Pick a different name.`, suggestions: await suggestNames(acct.name) };
     const salt = crypto.randomBytes(12).toString('hex');
     const fresh = { name, salt, hash: hashPin(pin, salt), created: Date.now() };
-    if (await set(K.acct(key), fresh, { nx: true })) { acct = fresh; created = true; }
-    else acct = await get(K.acct(key)); // someone claimed it a moment ago
+    if (!(await set(K.acct(key), fresh, { nx: true }))) // someone claimed it a moment ago
+      return { ok: false, taken: true, error: `“${name}” was just taken. Pick a different name.`, suggestions: await suggestNames(name) };
+    acct = fresh; created = true;
+  } else if (!acct) {
+    return { ok: false, notFound: true, error: `No player called “${name}” yet. New here? Choose “I’m new”.` };
   }
   if (!created) {
     const ok = crypto.timingSafeEqual(Buffer.from(hashPin(pin, acct.salt), 'hex'), Buffer.from(acct.hash, 'hex'));
     if (!ok) {
       const n = await incrFail(K.fail(key));
       const left = LOCK_AFTER - n;
-      return { ok: false, error: left > 0 ? `That name is taken and the PIN doesn’t match. ${left} ${left === 1 ? 'try' : 'tries'} left.` : `Too many wrong PINs for ${acct.name}. Try again in 10 minutes.` };
+      return { ok: false, error: left > 0 ? `Wrong PIN for ${acct.name}. ${left} ${left === 1 ? 'try' : 'tries'} left.` : `Too many wrong PINs for ${acct.name}. Try again in 10 minutes.` };
     }
     await del(K.fail(key));
   }
@@ -143,4 +181,4 @@ async function leaderboard(game, limit = 50) {
 const persistent = () => !!r;
 async function close() { if (r) { try { await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, GAMES: { lastcard: 'Last Card' } };
+module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, GAMES: { lastcard: 'Last Card' } };

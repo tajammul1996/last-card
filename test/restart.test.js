@@ -26,8 +26,8 @@ function phone(token) {
   let srv = await start();
   const a = phone('aaaaaaaaaaaaaaaaaaaa1'), b = phone('bbbbbbbbbbbbbbbbbbbb2');
   await sleep(300);
-  a.session = (await a.call('login', { name: 'Ravi', pin: '1111' })).session;
-  b.session = (await b.call('login', { name: 'Priya', pin: '2222' })).session;
+  a.session = (await a.call('login', { name: 'Ravi', pin: '1111', mode: 'new' })).session;
+  b.session = (await b.call('login', { name: 'Priya', pin: '2222', mode: 'new' })).session;
   const { code } = await a.call('create');
   await b.call('join', { code });
   a.code = b.code = code;
@@ -56,7 +56,7 @@ function phone(token) {
   srv = await start(); await sleep(1500);
   const lb = await a.call('leaderboard', { game: 'all' });
   console.log('leaderboard kept after restart:', JSON.stringify(lb.rows.map((x) => [x.name, x.wins, x.played])));
-  const relog = await a.call('login', { name: 'ravi', pin: '1111' });
+  const relog = await a.call('login', { name: 'ravi', pin: '1111', mode: 'back' });
   console.log('account kept after restart (sign in again works):', relog.ok && !relog.created);
   // host offline -> other player can take over
   a.s.close(); await sleep(200);

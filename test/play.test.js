@@ -28,10 +28,17 @@ function phone(name) {
   // ---- accounts ----
   const noAcct = await phones[0].call('create');
   assert(noAcct.needLogin, 'create without sign-in should ask to sign in');
-  for (const p of phones) { const r = await p.call('login', { name: p.name, pin: '1234' }); assert(r.ok && r.created, 'login ' + r.error); p.session = r.session; }
+  for (const p of phones) { const r = await p.call('login', { name: p.name, pin: '1234', mode: 'new' }); assert(r.ok && r.created, 'login ' + r.error); p.session = r.session; }
   const thief = phone('Thief'); await thief.ready;
-  let bad; for (let i = 0; i < 5; i++) bad = await thief.call('login', { name: 'ravi', pin: '9999' });
-  const locked = await thief.call('login', { name: 'Ravi', pin: '1234' });
+  // unique names: a second "ravi" can't claim it, and gets free suggestions
+  const dup = await thief.call('login', { name: '  RAVI ', pin: '5555', mode: 'new' });
+  const chk = await thief.call('checkName', { name: 'Ravi' });
+  const free = await thief.call('checkName', { name: 'Totally New' });
+  const ghost = await thief.call('login', { name: 'Nobody Here', pin: '1111', mode: 'back' });
+  console.log('duplicate name blocked:', dup.taken === true, '| suggestions:', JSON.stringify(dup.suggestions), '| all free:', (await Promise.all(dup.suggestions.map((n) => thief.call('checkName', { name: n })))).every((x) => x.available));
+  console.log('live check taken/free:', chk.available === false && free.available === true, '| unknown returning name:', ghost.notFound === true);
+  let bad; for (let i = 0; i < 5; i++) bad = await thief.call('login', { name: 'ravi', pin: '9999', mode: 'back' });
+  const locked = await thief.call('login', { name: 'Ravi', pin: '1234', mode: 'back' });
   console.log('wrong PIN rejected:', bad.ok === false, '| locked after 5 tries:', /Too many/.test(locked.error));
   const weird = await thief.call('login', { name: '<b>', pin: '12' });
   console.log('bad name/PIN rejected:', weird.ok === false);
@@ -77,7 +84,7 @@ function phone(name) {
   await phones[0].call('start'); await sleep(30);
   const zoya = phones[4];
   const other = phone('Kabir'); await other.ready;
-  await other.call('login', { name: 'Kabir', pin: '4321' });
+  await other.call('login', { name: 'Kabir', pin: '4321', mode: 'new' });
   const t2 = await other.call('create');
   const open2 = await zoya.call('open', { code: t2.code });
   console.log('new link shows invite (not seated):', open2.exists && !open2.seated);

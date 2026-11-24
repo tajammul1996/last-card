@@ -242,6 +242,14 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
 .whoami .nm{flex:1;font-weight:700;font-size:17px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .whoami small{display:block;color:var(--muted);font-weight:500;font-size:13px}
 #homeAuth,#invAuth{display:flex;flex-direction:column;gap:12px}
+.seg{display:grid;grid-template-columns:1fr 1fr;padding:4px;border-radius:14px;background:rgba(245,239,227,.07)}
+.seg button{min-height:44px;border-radius:10px;font-weight:700;font-size:15px;color:#c9d6e0}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--felt)}
+.hint{margin:-4px 0 0;font-size:14px;font-weight:600;line-height:1.4;min-height:1.4em}
+.hint.ok{color:#8fe0b5}.hint.bad{color:#ffb4a8}
+.inp.ok{border-color:#8fe0b5}.inp.bad{border-color:#ff8a80}
+.sugg{display:flex;flex-wrap:wrap;gap:8px}.sugg:empty{display:none}
+.sugg button{min-height:40px;padding:0 14px;border-radius:99px;border:1px solid rgba(143,224,181,.5);background:rgba(143,224,181,.1);color:#8fe0b5;font-weight:700;font-size:14px}
 .pin-inp{letter-spacing:.5em;font-family:var(--display);font-weight:800;max-width:140px}
 .rejoin{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:rgba(255,201,74,.12);border:1px solid rgba(255,201,74,.45)}
 .rejoin .tx{flex:1;min-width:0;font-size:14px;color:var(--muted)}
@@ -511,24 +519,72 @@ function route(){
 window.addEventListener('hashchange',route);
 
 /* ---------- accounts ---------- */
+let authMode=load('lc-nick')?'back':'new',checkTimer=null,checkSeq=0;
+const authCheck={};
 function authFields(prefix){
-  return `<label class="fld" for="${prefix}Name">Your name
-      <input id="${prefix}Name" class="inp" maxlength="18" placeholder="Priya" autocomplete="nickname" value="${esc(load('lc-nick'))}">
+  const isNew=authMode==='new';
+  return `<div class="seg" role="group" aria-label="New or returning player">
+      <button type="button" data-mode="new" aria-pressed="${isNew}">I’m new</button>
+      <button type="button" data-mode="back" aria-pressed="${!isNew}">I’ve played before</button>
+    </div>
+    <label class="fld" for="${prefix}Name">${isNew?'Pick a name':'Your name'}
+      <input id="${prefix}Name" class="inp" data-auth="${prefix}" maxlength="18" placeholder="Priya" autocomplete="nickname" aria-describedby="${prefix}Hint" value="${esc(load('lc-nick'))}">
     </label>
-    <label class="fld" for="${prefix}Pin">4-digit PIN
+    <p class="hint" id="${prefix}Hint" role="status"></p>
+    <div class="sugg" id="${prefix}Sugg" aria-label="Free names you can take"></div>
+    <label class="fld" for="${prefix}Pin">${isNew?'Choose a 4-digit PIN':'Your 4-digit PIN'}
       <input id="${prefix}Pin" class="inp pin-inp" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="••••" type="password">
     </label>
-    <p class="empty">New here? Pick any name and PIN. Use the same ones next time, on any phone, to keep your wins.</p>`;
+    <p class="empty">${isNew?'Names are unique. Use this name and PIN to sign in on any phone and keep your wins.':'Use the name and PIN you picked last time.'}</p>`;
 }
-function whoamiHTML(sub){return `<div class="whoami"><span class="nm">${esc(me.name)}<small>${esc(sub)}</small></span><button class="linkbtn" data-switch="1">Not you?</button></div>`;}
+function setHint(prefix,kind,text,sugg){
+  const h=$('#'+prefix+'Hint'),inp=$('#'+prefix+'Name'),box=$('#'+prefix+'Sugg');if(!h) return;
+  h.className='hint '+(kind||'');h.textContent=text||'';
+  if(inp){inp.classList.toggle('ok',kind==='ok');inp.classList.toggle('bad',kind==='bad');inp.setAttribute('aria-invalid',kind==='bad'?'true':'false');}
+  if(box) box.innerHTML=(sugg||[]).map(n=>`<button type="button" data-sugg="${esc(n)}" data-for="${prefix}">${esc(n)}</button>`).join('');
+}
+async function runCheck(prefix){
+  const inp=$('#'+prefix+'Name');if(!inp) return;
+  const name=inp.value.trim();
+  if(name.length<2){authCheck[prefix]=null;setHint(prefix,'',name?'Use at least 2 letters or numbers.':'');return;}
+  const seq=++checkSeq;
+  const r=await send('checkName',{name},true);
+  if(seq!==checkSeq||!r.ok) return;
+  authCheck[prefix]=r;
+  const isNew=authMode==='new';
+  if(!r.valid) setHint(prefix,'bad',r.error);
+  else if(isNew&&r.available) setHint(prefix,'ok',`“${r.name}” is free. It becomes yours once you set a PIN.`);
+  else if(isNew) setHint(prefix,'bad',`“${r.name}” is already taken. Pick a different name${r.suggestions&&r.suggestions.length?', or tap one of these:':'.'}`,r.suggestions);
+  else if(r.available) setHint(prefix,'bad',`No player called “${name}” yet. New here? Choose “I’m new”.`);
+  else setHint(prefix,'ok',`Welcome back, ${r.name}. Enter your PIN.`);
+}
+function prefixOf(el){const c=el.closest('#homeAuth,#invAuth');return c?(c.id==='homeAuth'?'h':'i'):null;}
+document.addEventListener('input',e=>{
+  const p=e.target.dataset&&e.target.dataset.auth;if(!p) return;
+  clearTimeout(checkTimer);checkTimer=setTimeout(()=>runCheck(p),300);
+});
+document.addEventListener('click',e=>{
+  const m=e.target.closest('[data-mode]');
+  if(m){const p=prefixOf(m);if(!p) return;const keep=($('#'+p+'Name')||{}).value;authMode=m.dataset.mode;
+    const c=m.closest('#homeAuth,#invAuth');c.innerHTML=authFields(p);if(keep!=null)$('#'+p+'Name').value=keep;runCheck(p);return;}
+  const sg=e.target.closest('[data-sugg]');
+  if(sg){const p=sg.dataset.for;const inp=$('#'+p+'Name');inp.value=sg.dataset.sugg;runCheck(p);$('#'+p+'Pin').focus();}
+});
 async function doLogin(prefix,errEl){
   const name=($('#'+prefix+'Name')||{}).value||'',pin=($('#'+prefix+'Pin')||{}).value||'';
   errEl.textContent='';
   if(name.trim().length<2){errEl.textContent='Type your name first.';$('#'+prefix+'Name').focus();return false;}
-  if(!/^\d{4}$/.test(pin)){errEl.textContent='Choose a 4-digit PIN (numbers only).';$('#'+prefix+'Pin').focus();return false;}
-  const r=await send('login',{name,pin},true);
-  if(!r.ok){errEl.textContent=r.error||'Couldn’t sign in. Try again.';return false;}
-  me={name:r.name};session=r.session;store('lc-session',session);store('lc-nick',r.name);last=r.last||last;
+  const chk=authCheck[prefix];
+  if(authMode==='new'&&chk&&chk.valid&&!chk.available&&chk.name.toLowerCase()===name.trim().replace(/\s+/g,' ').toLowerCase()){errEl.textContent='That name is taken. Pick a different one.';$('#'+prefix+'Name').focus();return false;}
+  if(!/^\d{4}$/.test(pin)){errEl.textContent=authMode==='new'?'Choose a 4-digit PIN (numbers only).':'Enter your 4-digit PIN.';$('#'+prefix+'Pin').focus();return false;}
+  const r=await send('login',{name,pin,mode:authMode},true);
+  if(!r.ok){
+    errEl.textContent=r.error||'Couldn’t sign in. Try again.';
+    if(r.taken) setHint(prefix,'bad','Pick a different name'+(r.suggestions&&r.suggestions.length?', or tap one of these:':'.'),r.suggestions);
+    if(r.notFound) setHint(prefix,'bad',r.error);
+    return false;
+  }
+  me={name:r.name};session=r.session;store('lc-session',session);store('lc-nick',r.name);last=r.last||last;authMode='back';
   toast(r.created?`Welcome, ${r.name}! Remember your PIN to keep your wins.`:`Signed in as ${r.name}`);
   return true;
 }
@@ -574,6 +630,7 @@ async function refreshLast(){const r=await send('hello',{token,session},true);if
 function showHome(){
   show('home');setHash('');
   $('#homeAuth').innerHTML=me?whoamiHTML('Your wins are saved to the leaderboard'):authFields('h');
+  if(!me) runCheck('h');
   $('#homeErr').textContent='';
   const lb=$('#rejoinBox');
   lb.innerHTML=last?`<div class="rejoin"><span class="tx"><b>Your game at table ${esc(last.code)}</b>${last.status==='playing'?'Round '+(last.round||1)+' is in progress':last.status==='over'?'Round over, waiting for the next deal':'Waiting in the lobby'}</span><button class="btn primary small" id="rejoinBtn">Rejoin</button></div>`:'';
@@ -632,6 +689,7 @@ function showInvite(info){
     <div class="or">not what you wanted?</div>
     <button class="btn" id="invOwn">Start my own table instead</button>`;
   $('#invOwn').onclick=()=>showHome();
+  if(!me) runCheck('i');
   const go=async()=>{
     const err=$('#invErr');const btn=$('#invJoin');
     if(!me&&!await doLogin('i',err)) return;

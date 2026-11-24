@@ -320,17 +320,25 @@ io.on('connection', (socket) => {
     ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name } : null, sessionValid: !session || !!socket.data.account, last: lastFor() });
   });
 
-  on('login', async ({ name, pin }, ack) => {
+  on('login', async ({ name, pin, mode }, ack) => {
     const now = Date.now();
     socket.data.logins = (socket.data.logins || []).filter((x) => now - x < 60_000);
     if (socket.data.logins.length >= 12) return ack({ ok: false, error: 'Too many tries. Wait a minute.' });
     socket.data.logins.push(now);
-    const r = await Accounts.login(name, pin);
+    const r = await Accounts.login(name, pin, mode === 'new' ? 'new' : 'back');
     if (!r.ok) return ack(r);
     socket.data.account = { key: r.key, name: r.name };
     const c = ctx();
     if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
     ack({ ok: true, session: r.session, name: r.name, created: r.created, last: lastFor() });
+  });
+
+  on('checkName', async ({ name }, ack) => {
+    const now = Date.now();
+    socket.data.checks = (socket.data.checks || []).filter((x) => now - x < 10_000);
+    if (socket.data.checks.length >= 30) return ack({ ok: false });
+    socket.data.checks.push(now);
+    ack(await Accounts.checkName(name));
   });
 
   on('logout', async ({ session }, ack) => {
