@@ -44,6 +44,7 @@ h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
 .btn.gold{background:var(--gold);color:var(--gold-ink);border-color:transparent}
 .btn.light{background:var(--ink);color:var(--felt);border-color:transparent}
 .btn.danger{background:var(--red);color:#fff;border-color:transparent}
+.btn.danger-line{background:transparent;color:#ff8a80;border:1.5px solid rgba(224,57,62,.7)}
 .btn.sm{min-height:44px;padding:0 14px;font-size:14px;border-radius:12px}
 .btn.block{width:100%}
 .btn[disabled]{opacity:.5;cursor:not-allowed}
@@ -619,7 +620,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
       <button class="btn" data-howto="1">How to play</button>
       <button class="btn" id="menuBoard">Leaderboard</button>
       <button class="btn" id="menuHome">Back to home</button>
-      <button class="btn danger" id="menuLeave">Leave table</button>
+      <button class="btn danger-line" id="menuLeave">Leave table</button>
     </div>
     <p class="note">Back to home keeps your seat. Leave table gives it up.</p>
     <button class="btn danger block" id="menuEnd" hidden>End game for everyone</button>
