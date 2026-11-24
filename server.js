@@ -519,7 +519,7 @@ io.on('connection', (socket) => {
     const now = Date.now();
     if (now - socket.data.lastChat < 350) return ack({ ok: false, error: 'You’re typing too fast.' });
     socket.data.lastChat = now;
-    const m = { id: rid(5), by: c.me, text: msg, at: now };
+    const m = { id: rid(5), by: c.me, name: c.p.name, text: msg, at: now };
     c.t.chat = (c.t.chat || []).concat(m).slice(-CHAT_KEEP);
     c.t.lastActive = now;
     io.to(c.t.code).emit('chat', { ...m, code: c.t.code });

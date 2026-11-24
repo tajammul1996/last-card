@@ -76,7 +76,18 @@ function nameOf(u) { const p = playerOf(u); return p ? p.name : (G && G.gone && 
 function isOnline(u) { const p = playerOf(u); return !!(p && p.online); }
 function isHost() { return !!G && G.host === G.me; }
 function av(u, size, withDot) { return avatarFor(nameOf(u).toLowerCase(), nameOf(u), { size, online: withDot ? isOnline(u) : undefined }); }
-function fmt(msg) { return String(msg).replace(/\{\{([^}]+)\}\}/g, (_, u) => nameOf(u)); }
+function fmt(msg) {
+  const meId = G && G.me, Y = '\u0001';
+  let t = String(msg).replace(/\{\{([^}]+)\}\}/g, (_, u) => (u === meId ? Y : nameOf(u)));
+  if (!t.includes(Y)) return t;
+  t = t.replace(/\u0001 draws (\d+) and is skipped/g, Y + ' draw $1 and are skipped')
+    .replace(/\u0001 played their last card and wins/g, Y + ' played your last card and win')
+    .replace(/\u0001 is the last one standing and wins/g, Y + ' are the last one standing and win')
+    .replace(/\u0001 took too long and was skipped/g, Y + ' took too long and were skipped')
+    .replace(/\u0001 (draws|goes|wins)\b/g, (m0, v) => Y + ' ' + v.slice(0, -1).replace(/oe$/, 'o'))
+    .replace(/\u0001 is\b/g, Y + ' are').replace(/\u0001 was\b/g, Y + ' were');
+  return t.replace(/(^|[.!?·:]\s*)\u0001/g, (m0, p) => p + 'You').replace(/\u0001/g, 'you');
+}
 function count(u) { return (G.counts && G.counts[u]) || 0; }
 function listNames(a) { return a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
 function ago(ts) {
@@ -96,9 +107,9 @@ function cardHTML(c, o) {
   o = o || {};
   const col = cc(c), v = cv(c), wild = col === 'w', lab = label(c), tag = o.tag || 'div', ul = v === '6' || v === '9' ? ' ul' : '';
   const mid = wild ? (v === 'F' ? '+4' : '') : lab;
-  return `<${tag} class="card ${o.cls || ''}" style="--w:${o.w || 64}px;--c:${CVAR[col]}" ${o.attrs || ''} aria-label="${esc(o.aria || cardName(c))}"><span class="face"><span class="oval ${wild ? 'oval-wild' : ''}"></span><span class="mid${wild ? ' mid-wild' : ''}${ul}">${esc(mid)}</span>${wild && v !== 'F' ? '<span class="corner tl"><i class="wdot"></i></span><span class="corner br"><i class="wdot"></i></span>' : `<span class="corner tl${ul}">${esc(lab)}</span><span class="corner br${ul}">${esc(lab)}</span>`}</span></${tag}>`;
+  return `<${tag} class="card ${o.cls || ''}${col === 'y' ? ' inky' : ''}" style="--w:${o.w || 64}px;--c:${CVAR[col]}" ${o.attrs || ''} aria-label="${esc(o.aria || cardName(c))}"><span class="face"><span class="ring ${wild ? 'ring-wild' : ''}"></span><span class="mid${wild ? ' mid-wild' : ''}${ul}">${esc(mid)}</span>${wild && v !== 'F' ? '<span class="corner tl"><i class="wdot"></i></span><span class="corner br"><i class="wdot"></i></span>' : `<span class="corner tl${ul}">${esc(lab)}</span><span class="corner br${ul}">${esc(lab)}</span>`}</span></${tag}>`;
 }
-function backHTML(w, cls) { return `<div class="card back ${cls || ''}" style="--w:${w}px"><span class="face"><span class="oval"></span><span class="wordmark">Last<br>Card</span></span></div>`; }
+function backHTML(w, cls) { return `<div class="card back ${cls || ''}" style="--w:${w}px"><span class="face"><span class="ring"></span><span class="wordmark">Last<br>Card</span></span></div>`; }
 
 /* ---------- server calls ---------- */
 function send(ev, data, quiet) {
@@ -192,6 +203,7 @@ $('#siBody').addEventListener('click', (e) => {
 function openSignIn(then) {
   afterSignIn = then || null;
   closeSheets();
+  if (!$('#signin').contains($('#siForm'))) $('#siTitle').after($('#siForm'));
   if (me) {
     $('#siTitle').textContent = 'Your account';
     $('#siBody').innerHTML = `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name)}<span class="tx">Signed in as<b>${esc(me.name)}</b></span></div><p class="note">Wins from every game you finish signed in go on the leaderboard.</p>`;
@@ -294,7 +306,7 @@ socket.on('chat', (m) => {
 $('#reloadBtn').onclick = () => location.reload();
 
 /* ---------- home ---------- */
-$('#acctBtn').onclick = () => openSignIn();
+$('#acctBtn').onclick = () => { if (!me && view === 'home' && $('#homeAuthSlot #siName')) $('#siName').focus(); else openSignIn(); };
 async function refreshLast() { const r = await send('hello', { token, session }, true); if (r.ok) last = r.last || null; }
 function showHome() {
   show('home'); setHash('');
@@ -303,13 +315,25 @@ function showHome() {
   else { ab.className = 'acct out'; ab.textContent = 'Sign in'; ab.removeAttribute('aria-label'); }
   $('#greet').textContent = me ? `Ready for a round, ${me.name}?` : 'Ready for a round?';
   $('#homeErr').textContent = '';
+  // signed out: the sign-in form sits right on the page instead of hiding behind a header button
+  const authBox = $('#homeAuth');
+  authBox.hidden = !!me; $('#newGameBox').hidden = !me;
+  if (!me) { $('#homeAuthSlot').appendChild($('#siForm')); renderAuth(); }
+  else if (!$('#signin').contains($('#siForm'))) $('#siTitle').after($('#siForm'));
   const box = $('#rejoinBox');
-  if (last) {
-    const what = last.status === 'playing' ? (last.yourTurn ? 'It’s your turn' : `Round ${last.round || 1} in progress`) : last.status === 'over' ? 'Round over' : 'Waiting in the lobby';
-    const sub = last.players && last.players.length ? 'with ' + listNames(last.players.slice(0, 3)) + (last.players.length > 3 ? ` +${last.players.length - 3}` : '') : 'Just you so far';
-    box.innerHTML = `<button class="rejoin" id="rejoinBtn"><span class="mini" aria-hidden="true"><i>7</i></span><span class="tx"><small>${last.status === 'lobby' ? 'Your table' : 'Game in progress'} · ${esc(last.code)}</small><b>${esc(what)}</b><span>${esc(sub)}</span></span><span class="go">Rejoin →</span></button>`;
+  if (last && me) {
+    const others = (last.players || []).filter((n) => n !== me.name);
+    const chip = last.status === 'playing' ? (last.yourTurn ? 'Your turn' : `Round ${last.round || 1}`) : last.status === 'over' ? 'Round over' : 'In the lobby';
+    const sub = others.length ? (last.status === 'playing' ? `Round ${last.round || 1} with ` : 'With ') + listNames(others.slice(0, 3)) + (others.length > 3 ? ` and ${others.length - 3} more` : '') : 'Just you so far';
+    box.innerHTML = `<section class="rejoin2" aria-labelledby="rjT">
+      <div class="rj-top"><span id="rjT" class="rj-eye">Your table</span><span class="rj-chip ${last.yourTurn ? 'hot' : ''}">${esc(chip)}</span></div>
+      <div class="rj-mid"><span class="rj-code">${esc(last.code)}</span><span class="stack-av" aria-hidden="true">${others.slice(0, 4).map((n) => avatarFor(n.toLowerCase(), n, { size: 'sm' })).join('')}</span></div>
+      <p class="rj-sub">${esc(sub)}</p>
+      <button class="btn gold block" id="rejoinBtn" style="min-height:52px;font-size:16px">Rejoin table</button>
+    </section>`;
     $('#rejoinBtn').onclick = () => openTable(last.code);
   } else box.innerHTML = '';
+  $('#createBtn').className = 'btn block ' + (last && me ? 'light' : 'gold');
   loadHomeBoard();
 }
 async function loadHomeBoard() {
@@ -317,10 +341,11 @@ async function loadHomeBoard() {
   if (!r.ok) return;
   const mine = r.mine, top = r.rows;
   const lead = top[0];
+  $('#myRank').hidden = !mine && (!me || !top.length);
   $('#myRank').innerHTML = mine
     ? `<b>#${mine.rank}</b><span>You · <strong style="color:var(--ink)">${mine.wins} win${mine.wins === 1 ? '' : 's'}</strong> in ${mine.played} game${mine.played === 1 ? '' : 's'}${lead && lead.name !== mine.name ? `<br>${lead.wins - mine.wins === 0 ? 'Level with ' + esc(lead.name) : (lead.wins - mine.wins) + ' behind ' + esc(lead.name)}` : mine.rank === 1 ? '<br>You’re on top' : ''}</span>`
     : `<span>${me ? 'Finish a round to get on the board.' : 'Sign in and finish a round to get on the board.'}</span>`;
-  $('#topList').innerHTML = top.length ? top.map((x) => `<li class="${x.me ? 'me' : ''}"><span class="rk">${x.rank}</span><span class="nm">${esc(x.name)}${x.me ? ' (you)' : ''}</span><span class="w">${x.wins}</span></li>`).join('') : '<li><span class="nm" style="color:var(--muted)">No wins yet. Be the first.</span></li>';
+  $('#topList').innerHTML = top.length ? top.map((x) => `<li class="${x.me ? 'me' : ''}"><span class="rk">${x.rank}</span><span class="nm">${esc(x.name)}${x.me ? ' (you)' : ''}</span><span class="w">${x.wins}</span></li>`).join('') : `<li><span class="nm" style="color:var(--muted)">No wins yet. ${me ? 'Finish a round to be first.' : 'Sign in and finish a round to be first.'}</span></li>`;
 }
 $('#createBtn').onclick = () => needSignIn(async () => {
   $('#createBtn').disabled = true;
@@ -358,18 +383,19 @@ function showInvite(info) {
   }
   const host = info.host || 'Someone';
   const status = info.status === 'lobby' ? 'waiting in the lobby' : info.status === 'playing' ? `round ${info.round} in progress, you’ll join next round` : 'between rounds';
-  const others = info.players.filter((n) => n !== host);
+  const seatsShown = info.players.slice(0, info.full ? 8 : 7);
   body.innerHTML = `
     <a class="logo" href="/" style="flex-grow:0">Last <span>Card</span></a>
     <div class="inv-hero">
-      <span class="host">${avatarFor(host.toLowerCase(), host, { size: 'lg' })}<em>Host</em></span>
-      <h1>${esc(host)} invited you<br>to play Last Card</h1>
-      <p class="note" style="font-size:15px">Table <b style="color:var(--ink);letter-spacing:.12em">${esc(info.code)}</b> · ${esc(status)}</p>
+      <p class="note" style="font-size:15px;color:var(--soft)">You’re invited to play Last Card</p>
+      <h1>${esc(host)}’s table</h1>
+      <span class="inv-code">${esc(info.code)}</span>
     </div>
-    <div class="inv-who">
-      <div class="stack-av">${info.players.slice(0, 6).map((n) => avatarFor(n.toLowerCase(), n)).join('')}</div>
-      <p class="note" style="font-size:15px;color:var(--soft)">${info.players.length === 1 ? `${esc(host)} is at the table` : `${esc(listNames(info.players.slice(0, 4)))}${info.players.length > 4 ? ` and ${info.players.length - 4} more` : ''} are at the table`}</p>
-    </div>
+    <section class="inv-seats" aria-labelledby="invAt">
+      <h2 id="invAt">At the table · ${info.players.length}</h2>
+      <ul>${seatsShown.map((n) => `<li>${avatarFor(n.toLowerCase(), n)}<span class="nm">${esc(n)}</span><em>${n === host ? 'Host' : ''}</em></li>`).join('')}${info.full ? '' : `<li class="you"><span class="av openseat">${me ? esc(me.name[0].toUpperCase()) : '?'}</span><span class="nm">You</span><em>Joining</em></li>`}</ul>
+      <p class="inv-status">${esc(status[0].toUpperCase() + status.slice(1))}</p>
+    </section>
     <div class="inv-foot">
       ${me ? `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name, { size: 'sm' })}<span class="tx">Joining as<b>${esc(me.name)}</b></span><button class="linkbtn" id="invSwitch">Not you?</button></div>` : ''}
       <button class="btn gold block" id="invJoin" style="min-height:58px;font-size:18px" ${info.full ? 'disabled' : ''}>${info.full ? 'This table is full' : `Join ${esc(host)}’s table`}</button>
@@ -398,6 +424,7 @@ async function showBoard(from) {
   if (view !== 'board') return;
   if (!r.ok) { $('#lbRows').innerHTML = '<li class="lbrow"><span></span><span class="nm"><b>Couldn’t load the leaderboard. Try again.</b></span><span></span></li>'; return; }
   const games = Object.assign({ all: 'All games' }, r.games || {});
+  $('#lbGames').hidden = Object.keys(games).length <= 2;
   $('#lbGames').innerHTML = Object.entries(games).map(([k, v]) => `<button data-g="${esc(k)}" aria-pressed="${k === r.game}">${esc(v)}</button>`).join('');
   const pct = (x) => (x.played ? Math.round((100 * x.wins) / x.played) : 0) + '%';
   const nm = (x) => esc(x.name) + (x.me ? ' (you)' : '');
@@ -415,7 +442,7 @@ async function showBoard(from) {
   const showMine = r.mine && (!isWide() || r.mine.rank > 8);
   $('#mineBar').hidden = !showMine;
   if (showMine) $('#mineRow').innerHTML = `<span class="rk" style="color:var(--gold)">#${r.mine.rank}</span><span class="nm"><b>You · ${esc(r.mine.name)}</b><small>${r.mine.played} games · ${pct(r.mine)} won</small></span><span class="w">${r.mine.wins}</span><span class="xc">${r.mine.played}</span><span class="xc">${pct(r.mine)}</span><span class="xc last">${ago(r.mine.last)}</span>`;
-  $('#lbNote').textContent = (me ? '' : 'Sign in to get on the board. ') + 'A round counts when someone wins by playing their last card.' + (r.persistent ? '' : ' The leaderboard isn’t saved permanently yet, so it may reset.');
+  $('#lbNote').textContent = (me ? '' : 'Sign in to get on the board. ') + 'A round counts when someone wins by playing their last card.';
 }
 $('#lbGames').addEventListener('click', (e) => { const b = e.target.closest('[data-g]'); if (b) { boardGame = b.dataset.g; showBoard(boardFrom); } });
 $('#lbPeriod').addEventListener('click', (e) => { const b = e.target.closest('[data-period]'); if (b) { boardPeriod = b.dataset.period; showBoard(boardFrom); } });
@@ -439,7 +466,7 @@ async function goHomeKeepSeat() {
   await refreshLast(); showHome();
   if (last) toast('Your seat is saved. Tap Rejoin to go back.');
 }
-$('#menuBtn').onclick = () => { closeSheets(); renderMenu(); $('#menu').hidden = false; };
+$('#menuBtn').onclick = () => { closeSheets(); menuOpen = null; renderMenu(); $('#menu').hidden = false; };
 $('#menuHome').onclick = goHomeKeepSeat;
 $('#menuBoard').onclick = () => { closeSheets(); showBoard('game'); };
 $('#menuLeave').onclick = async () => { closeSheets(); const code = curCode; curCode = null; G = null; last = null; await send('leave', {}, true); toast('You left table ' + code); showHome(); };
@@ -468,18 +495,23 @@ function renderMenu() {
   $('#menuPlayers').innerHTML = G.players.map((p) => {
     const inRound = G.status !== 'lobby' && G.order.includes(p.id);
     const btns = [];
-    if (p.id !== G.me && host) btns.push(`<button class="btn sm" data-host="${esc(p.id)}">Make host</button>`);
-    if (p.id !== G.me && (host || !p.online)) btns.push(`<button class="btn sm" data-rm="${esc(p.id)}">Remove</button>`);
+    // one quiet options button per player; the actions show only when you ask for them
+    if (p.id !== G.me && host && menuOpen === p.id) btns.push(`<button class="btn sm" data-host="${esc(p.id)}">Make host</button>`, `<button class="btn sm" data-rm="${esc(p.id)}">Remove</button>`);
+    else if (p.id !== G.me && host) btns.push(`<button class="iconbtn more" data-more="${esc(p.id)}" aria-label="Options for ${esc(p.name)}"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg></button>`);
+    else if (p.id !== G.me && !p.online) btns.push(`<button class="btn sm" data-rm="${esc(p.id)}">Remove</button>`);
     return `<li>${av(p.id, '', true)}<span class="nm">${esc(p.name)}${p.id === G.me ? ' (you)' : ''}${p.id === G.host ? ' · host' : ''}<br><small style="color:var(--muted);font-weight:500">${p.online ? 'Online' : 'Offline'} · ${inRound ? count(p.id) + ' cards' : 'Waiting for next round'}${p.signedIn ? '' : ' · not signed in'}</small></span>${btns.join('')}</li>`;
   }).join('');
 }
+let menuOpen = null;
 $('#menuPlayers').addEventListener('click', (e) => {
+  const mo = e.target.closest('[data-more]'); if (mo) { menuOpen = mo.dataset.more; renderMenu(); return; }
   const rm = e.target.closest('[data-rm]'); if (rm) { rm.disabled = true; send('remove', { id: rm.dataset.rm }); return; }
   const mh = e.target.closest('[data-host]'); if (mh) { mh.disabled = true; send('makeHost', { id: mh.dataset.host }); }
 });
 
 /* ---------- chat ---------- */
 function updateBadge() { refreshPeek(); const b = $('#chatBadge'); b.hidden = !unread; b.textContent = unread > 9 ? '9+' : String(unread); $('#chatBtn').setAttribute('aria-label', unread ? `Open chat, ${unread} unread` : 'Open chat'); }
+function chatName(m) { return playerOf(m.by) ? nameOf(m.by) : m.name || nameOf(m.by); }
 function renderChat() {
   const box = $('#msgs');
   if (!chatMsgs.length) { box.innerHTML = '<p class="note" style="margin:auto 0 0">No messages yet. Say hi, or tap a quick reply below.</p>'; return; }
@@ -487,7 +519,7 @@ function renderChat() {
   box.innerHTML = chatMsgs.map((m) => {
     if (m.sys) return `<div class="msg sys">${esc(m.text)}</div>`;
     const hh = new Date(m.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-    return `<div class="msg ${m.by === mine ? 'mine' : ''}">${m.by === mine ? '' : `<span class="who">${esc(nameOf(m.by))}</span>`}<span class="txt">${esc(m.text)}</span><time>${esc(hh)}</time></div>`;
+    return `<div class="msg ${m.by === mine ? 'mine' : ''}">${m.by === mine ? '' : `<span class="who">${esc(chatName(m))}</span>`}<span class="txt">${esc(m.text)}</span><time>${esc(hh)}</time></div>`;
   }).join('');
   box.scrollTop = box.scrollHeight;
 }
@@ -497,7 +529,7 @@ $('#chatBtn').onclick = openChat;
 const ICON_CHAT = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z"/></svg>';
 function chatPeekHTML() {
   const last = chatMsgs.filter((m) => !m.sys).slice(-1)[0];
-  const text = last ? `<b>${esc(last.by === (G && G.me) ? 'You' : nameOf(last.by))}:</b> ${esc(last.text)}` : 'One more round? Ask the table';
+  const text = last ? `<b>${esc(last.by === (G && G.me) ? 'You' : chatName(last))}:</b> ${esc(last.text)}` : 'One more round? Ask the table';
   return `<button class="chatpeek" id="overChat" aria-label="Open chat">${ICON_CHAT}<span class="tx">${text}</span><span class="go">Chat${unread ? ` <i>${unread > 9 ? '9+' : unread}</i>` : ''}</span></button>`;
 }
 function refreshPeek() { const p = $('#overChat'); if (p) { p.outerHTML = chatPeekHTML(); const q = $('#overChat'); if (q) q.onclick = openChat; } }
@@ -512,6 +544,7 @@ $('#quick').addEventListener('click', (e) => { const b = e.target.closest('[data
 /* ---------- game state ---------- */
 function onState(s) {
   const prev = G; G = s; G.clockSkew = Date.now() - s.now;
+  if (!prev) renderChat(); // names in chat history need the player list
   const lg = (G.log || []).slice(-1)[0];
   if (view === 'game' && seenV >= 0 && lg && lg.v > seenV && (isWide() || ['call', 'catch', 'win'].includes(lg.kind))) toast(fmt(lg.msg), lg.kind);
   seenV = G.v || 0;
@@ -534,7 +567,7 @@ function onState(s) {
 function render() {
   if (view !== 'game' || !G) return;
   const st = G.settings || {};
-  $('#gSub').textContent = (G.status === 'lobby' ? 'Lobby' : 'Round ' + (G.round || 1)) + ' · ' + (st.stack ? 'stacking on' : 'no stacking') + (st.drawUntil ? ' · draw until you can play' : '');
+  $('#gSub').textContent = G.status === 'lobby' ? 'Lobby · ' + (isHost() ? 'you’re the host' : 'hosted by ' + nameOf(G.host)) : 'Round ' + (G.round || 1) + ' · ' + (st.stack ? 'stacking on' : 'no stacking') + (st.drawUntil ? ' · draw until you can play' : '');
   if (G.status === 'lobby') renderLobby(); else renderTable();
   if (!$('#menu').hidden) renderMenu();
   $$('#rules [data-set]').forEach((b) => b.setAttribute('aria-pressed', String(!!st[b.dataset.set])));
@@ -553,21 +586,20 @@ function renderLobby() {
   const ruleText = `${st.stack ? 'stacking +2/+4 on' : 'no stacking'} · ${st.drawUntil ? 'draw until you can play' : 'draw one card'}`;
   $('#gMain').innerHTML = `
     <div class="lobby">
-      <p class="eyebrow">${host ? 'Lobby · you’re the host' : 'Lobby · hosted by ' + esc(nameOf(G.host))}</p>
       <section class="card-box gold-box invite-card" aria-labelledby="invh" style="padding:16px;border-radius:20px">
         <h2 id="invh">Invite your friends</h2>
         <p class="note" style="color:var(--soft)">They open the link, tap Join and land right here.</p>
         <input class="inp linkbox" readonly value="${esc(inviteLink())}" aria-label="Invite link" style="font-size:15px">
-        <div class="row"><button class="btn gold" id="shareBtn">${ICON.share}Share link</button><button class="btn" id="copyBtn" style="flex:0 0 auto">Copy</button></div>
+        <div class="row"><button class="btn light" id="shareBtn">${ICON.share}Share link</button><button class="btn" id="copyBtn" style="flex:0 0 auto">Copy</button></div>
       </section>
       <section aria-labelledby="plh" style="display:flex;flex-direction:column;gap:8px">
         <h2 id="plh" style="font-size:18px">At the table · ${ps.length} of 10</h2>
         <ul class="plist">${ps.map((p) => `<li>${av(p.id, '', true)}<span class="nm">${esc(p.name)}${p.id === G.me ? ' (you)' : ''}</span><span class="tag">${p.id === G.host ? 'Host' : p.online ? (p.signedIn ? 'Ready' : 'Not signed in') : 'Away'}</span></li>`).join('')}</ul>
       </section>
-      <div class="rulesrow"><span><b style="color:var(--ink)">House rules:</b> ${esc(ruleText)}</span>${host ? '<button class="linkbtn" id="rulesBtn">Change</button>' : ''}</div>
     </div>
     <div class="dealbar">
-      ${host ? `<p class="note">${ps.length < 2 ? 'You need at least 2 players to deal.' : 'Anyone who joins later is dealt in next round.'}</p><button class="btn light" id="startBtn" ${ps.length < 2 ? 'disabled' : ''}>${ps.length < 2 ? 'Waiting for players' : `Deal cards · ${ps.length} players`}</button>` : hostWaitHTML('deal the cards')}
+      <div class="dealrules"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg><span>${esc(ruleText[0].toUpperCase() + ruleText.slice(1))}</span>${host ? '<button class="linkbtn" id="rulesBtn">Change rules</button>' : ''}</div>
+      ${host ? `<p class="note">${ps.length < 2 ? 'You need at least 2 players to deal.' : 'Anyone who joins later is dealt in next round.'}</p><button class="btn gold" id="startBtn" ${ps.length < 2 ? 'disabled' : ''}>${ps.length < 2 ? 'Waiting for players' : `Deal cards · ${ps.length} players`}</button>` : hostWaitHTML('deal the cards')}
     </div>`;
   $('#shareBtn').onclick = async () => {
     const link = inviteLink();
@@ -640,26 +672,31 @@ function lastMoveText() {
   if (!lg) return '';
   return fmt(lg.msg).replace(/ · play now goes (anti)?clockwise/, ' · order reversed');
 }
+// Everyone sits in one fixed row, left to right in play order; only the highlight moves.
+// A Reverse flips the row once so left to right is still the order of play. No scrolling: up to 10 fit.
 function queueHTML(myTurn) {
   const n = G.order.length, playing = G.status === 'playing', curU = G.order[G.turn];
-  const ups = upNextOrder();
-  const slots = Math.max(3, Math.floor((Math.min(window.innerWidth, 520) - 140) / 50));
-  const shown = queueAll || ups.length <= slots ? ups : ups.slice(0, slots - 1);
-  const more = ups.length - shown.length;
+  const seats = G.dir === -1 ? G.order.slice().reverse() : G.order.slice();
+  const nextU = playing ? G.order[mod(G.turn + (G.dir === -1 ? -1 : 1), n)] : null;
+  const tier = n <= 5 ? 'l' : n <= 7 ? 'm' : 's';
   const revTag = playing && n > 2 && revMark && revMark.round === G.round && revMark.turnAt === G.turnAt;
-  const badge = (u) => `<span class="qct ${count(u) === 1 ? 'one' : ''}" aria-label="${count(u)} cards">${count(u)}</span>`;
-  const sub = (u) => (!isOnline(u) ? 'Offline' : count(u) === 1 && playing ? 'Last card' : '');
-  const items = shown.map((u) => `<li class="${u === G.me ? 'me' : ''} ${!isOnline(u) ? 'off' : ''}" data-u="${esc(u)}" aria-label="${u === G.me ? 'You' : esc(nameOf(u))}, ${count(u)} cards"><span class="qavw">${av(u, '', false)}${badge(u)}</span><span class="qn">${u === G.me ? 'You' : esc(nameOf(u))}</span><span class="qs ${count(u) === 1 ? 'warn' : ''}">${esc(sub(u))}</span></li>`).join('');
-  const chip = more > 0 ? `<li class="chipli"><button class="qmore" id="qMore" aria-label="Show all ${n} players">+${more}</button></li>`
-    : queueAll && ups.length > slots ? `<li class="chipli"><button class="qmore" id="qMore" aria-label="Show fewer">Less</button></li>` : '';
-  const anim = flipRing ? 'flip' : qAdvance ? 'adv' : '';
-  return `<section class="qstrip" aria-label="Turn order">
-    <div class="qlabels"><span class="l1">Now</span><span class="l2">${n === 2 ? 'Then' : 'Up next'}</span>${revTag ? '<span class="qrev">⇄ Order reversed</span>' : ''}</div>
-    <div class="qrow ${anim}">
-      <div class="qnow ${!isOnline(curU) ? 'off' : ''}" id="qNow" data-u="${esc(curU)}"><span class="qavw">${av(curU, '', false)}${badge(curU)}</span><span class="qn">${curU === G.me ? 'You' : esc(nameOf(curU))}</span><span class="qs">${playing ? (myTurn ? 'Your turn' : isOnline(curU) ? `<span id="turnClock">${clockText(turnLeft())}</span> left` : 'Offline') : ''}</span></div>
-      <span class="qsep" aria-hidden="true"><svg width="12" height="16" viewBox="0 0 12 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2l6 6-6 6"/></svg></span>
-      <ol class="qlist">${items}${chip}</ol>
-    </div>
+  const arrow = '<svg width="16" height="10" viewBox="0 0 16 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 5h13M10 1l4 4-4 4"/></svg>';
+  const sep = '<li class="qsep" aria-hidden="true"><svg width="8" height="12" viewBox="0 0 8 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l4 4-4 4"/></svg></li>';
+  const items = seats.map((u, i) => {
+    const isCur = playing && u === curU, me = u === G.me, c = count(u), off = !isOnline(u);
+    const label = me ? 'You' : nameOf(u);
+    let sub = '', subCls = '';
+    if (isCur) { sub = me ? 'Your turn' : off ? 'Offline' : `<span id="turnClock">${clockText(turnLeft())}</span>`; subCls = 'now'; }
+    else if (off) sub = 'Offline';
+    else if (playing && u === nextU && n > 2) sub = 'next';
+    else if (playing && c === 1) { sub = 'Last card'; subCls = 'warn'; }
+    const aria = `${esc(label)}, ${c} card${c === 1 ? '' : 's'}${isCur ? ', playing now' : u === nextU && n > 2 ? ', next' : ''}${off ? ', offline' : ''}`;
+    return `<li class="${isCur ? 'cur' : ''} ${me ? 'me' : ''} ${off ? 'off' : ''}" data-u="${esc(u)}" aria-label="${aria}"${isCur ? ' aria-current="true"' : ''}><span class="qavw">${av(u, '', false)}<span class="qct ${c === 1 ? 'one' : ''}" aria-hidden="true">${c}</span></span><span class="qn">${esc(label)}</span><span class="qs ${subCls}">${sub}</span></li>` + (tier !== 's' && i < n - 1 ? sep : '');
+  }).join('');
+  const right = revTag ? '<span class="qrev">⇄ Order reversed</span>' : n === 2 ? '<span class="qhint2">1 vs 1</span>' : tier === 's' ? `<span class="qhint2">${n} players</span>` : '<span class="qhint2">then back to the start ↩</span>';
+  return `<section class="qstrip t-${tier}" aria-label="Turn order, left to right">
+    <div class="qlabels"><span class="l1">Turn order${tier === 's' ? ' ' + arrow : ''}</span>${right}</div>
+    <ol class="qlist ${flipRing ? 'flip' : qAdvance ? 'adv' : ''}">${items}</ol>
   </section>`;
 }
 function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) {
@@ -699,7 +736,6 @@ function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) 
   renderActions();
   if (seated) renderHand(hand, myTurn, prevScroll, R);
   $('#drawPile').onclick = doDraw;
-  const qm = $('#qMore'); if (qm) qm.onclick = () => { queueAll = !queueAll; render(); };
   const nb = $('#nextBtn'); if (nb) nb.onclick = () => send('start');
   const ob = $('#overBoard'); if (ob) ob.onclick = () => showBoard('game');
   wireEnd();
@@ -755,8 +791,8 @@ function runFx(fx, from) {
         Snd.play(G.order.length > 2 ? 'reverse' : 'skip');
       }
       if (wild) {
-        const o = p.querySelector('.oval');
-        if (o) o.animate([{ transform: 'rotate(26deg) scaleX(.86)' }, { transform: 'rotate(746deg) scaleX(.86)' }], { duration: 800, easing: 'cubic-bezier(.2,.6,.2,1)' });
+        const o = p.querySelector('.ring');
+        if (o) o.animate([{ transform: 'translate(-50%,-50%) rotate(0deg)' }, { transform: 'translate(-50%,-50%) rotate(720deg)' }], { duration: 800, easing: 'cubic-bezier(.2,.6,.2,1)' });
         setTimeout(() => wash(c, CVAR[G.color]), heavy ? 120 : 520);
         if (!heavy) Snd.play('wild');
       }
@@ -857,7 +893,7 @@ function updateHandEdges() {
   wrap.classList.toggle('more-l', l); wrap.classList.toggle('more-r', r);
   $('#scrL').hidden = !l; $('#scrR').hidden = !r;
 }
-let handOrder = [], flipRing = false, revMark = null, qAdvance = false, queueAll = false, fxFlying = false, lastTap = null;
+let handOrder = [], flipRing = false, revMark = null, qAdvance = false, fxFlying = false, lastTap = null;
 /* Seats sit on an ellipse in play order, you at the bottom. Seats never move when play reverses;
    only the flow of the ring and the arrow towards the next player change direction. */
 function ringHTML(cw, dw, myTurn) {
@@ -901,8 +937,12 @@ function ringHTML(cw, dw, myTurn) {
 }
 function renderHand(hand, myTurn, prevScroll, R) {
   const el = $('#hand');
-  const idx = hand.map((c, i) => i).sort((a, b) => CORD.indexOf(cc(hand[a])) - CORD.indexOf(cc(hand[b])) || VORD.indexOf(cv(hand[a])) - VORD.indexOf(cv(hand[b])));
+  let idx = hand.map((c, i) => i).sort((a, b) => CORD.indexOf(cc(hand[a])) - CORD.indexOf(cc(hand[b])) || VORD.indexOf(cv(hand[a])) - VORD.indexOf(cv(hand[b])));
   if (myTurn && G.drew) { const li = hand.length - 1; idx.splice(idx.indexOf(li), 1); idx.unshift(li); }
+  else if (myTurn && G.status === 'playing') {
+    const ok = idx.filter((i) => canPlay(hand[i], R));
+    idx = ok.concat(idx.filter((i) => !ok.includes(i)));
+  }
   handOrder = idx;
   const wide = isWide(), w = wide ? 88 : window.innerWidth < 370 || window.innerHeight < 760 ? 70 : 80;
   el.innerHTML = idx.map((i, k) => {
@@ -912,9 +952,9 @@ function renderHand(hand, myTurn, prevScroll, R) {
     if (myTurn && G.drew && i === hand.length - 1) cls += ' fresh';
     return `<div class="hcard ${cls}">${cardHTML(c, { w, tag: 'button', attrs: `data-i="${i}"`, aria: cardName(c) + (ok ? ', playable' : '') + (wide && k < 9 ? `, key ${k + 1}` : '') })}${k < 9 ? `<kbd>${k + 1}</kbd>` : ''}</div>`;
   }).join('');
-  if (!wide) {
-    const avail = el.clientWidth - 32, n = idx.length;
-    let ov = 6; if (n > 1 && n * w + (n - 1) * 6 > avail) ov = Math.max(-w * 0.4, (avail - w) / (n - 1) - w);
+  {
+    const gap = wide ? 10 : 6, avail = el.clientWidth - (wide ? 40 : 32), n = idx.length;
+    let ov = gap; if (n > 1 && n * w + (n - 1) * gap > avail) ov = Math.max(-w * (wide ? 0.6 : 0.4), (avail - w) / (n - 1) - w);
     el.style.setProperty('--ov', ov + 'px');
   }
   el.style.scrollBehavior = 'auto'; el.scrollLeft = prevScroll; el.style.scrollBehavior = '';
@@ -938,7 +978,12 @@ function tryPlay(i, el) {
     toast(G.drew ? 'You can only play the card you just drew' : G.pending > 0 ? 'Stack a draw card or take the cards' : 'That card doesn’t match'); return;
   }
   if (el) lastTap = { rect: el.getBoundingClientRect(), at: Date.now() };
-  if (cc(c) === 'w') { pendingWild = { i }; closeSheets(); $('#picker').hidden = false; $('#picker button[data-col]').focus(); return; }
+  if (cc(c) === 'w') {
+    pendingWild = { i }; closeSheets();
+    const held = { r: 0, y: 0, g: 0, b: 0 }; hand.forEach((x, k) => { if (k !== i && held[cc(x)] !== undefined) held[cc(x)]++; });
+    const most = Math.max(...Object.values(held));
+    $$('#picker button[data-col]').forEach((b) => { const k = held[b.dataset.col]; b.querySelector('small').textContent = k ? `You hold ${k}${k === most ? ' · most' : ''}` : 'You hold none'; b.classList.toggle('most', k > 0 && k === most); });
+    $('#picker').hidden = false; $('#picker button[data-col]').focus(); return; }
   doPlay(i, null);
 }
 async function doPlay(i, col) { const r = await send('play', { i, color: col, called: armedCall }); if (r.ok) armedCall = false; }
@@ -979,7 +1024,7 @@ function overHTML() {
     ${rec ? `<div class="gold-box" style="display:flex;align-items:center;gap:10px;font-size:14px">${ICON.trophy}<span>+1 win for ${G.winner === G.me ? 'you' : esc(nameOf(G.winner))}${rec.rank ? ` · now <b>#${rec.rank}</b> on the leaderboard` : ''}</span></div>` : ''}
     ${chatPeekHTML()}
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
-    ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal the next round</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
+    ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal round ${(G.round || 1) + 1}</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
       : `${isOnline(G.host) ? `<p class="note" style="text-align:center;color:var(--soft)">Waiting for <b style="color:var(--ink)">${esc(nameOf(G.host))}</b> (host) to deal the next round</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="nudgeBtn">Nudge ${esc(nameOf(G.host))}</button><button class="btn light" id="overBoard">Leaderboard</button></div>` : `${hostWaitHTML('deal')}<button class="btn" id="overBoard">Leaderboard</button>`}`}
   </div></div>`;
 }
