@@ -8,6 +8,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { Server } = require('socket.io');
 const E = require('./public/engine.js');
+const Accounts = require('./accounts.js');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
@@ -43,8 +44,11 @@ const io = new Server(server, { pingInterval: 20_000, pingTimeout: 25_000, maxHt
 // ---------- state ----------
 /** code -> { code, created, lastActive, rev, names, chat, players: Map<id, player>, s } */
 const tables = new Map();
-/** token -> { code, id } */
-const tokens = new Map();
+/** who sat where last: 'a:<account>' or 't:<token>' -> table code (for the "Rejoin" card) */
+const lastTable = new Map();
+const seatKeys = (p) => [p.account ? 'a:' + p.account : null, p.token ? 't:' + p.token : null].filter(Boolean);
+function remember(t, p) { for (const k of seatKeys(p)) lastTable.set(k, t.code); }
+function forget(t, p) { for (const k of seatKeys(p)) if (lastTable.get(k) === t.code) lastTable.delete(k); }
 
 const rid = (n) => crypto.randomBytes(n).toString('hex');
 const cleanName = (n) => String(n || '').replace(/[\u0000-\u001f\u007f<>]/g, '').trim().slice(0, 18) || 'Player';
@@ -79,7 +83,7 @@ let flushTimer = null;
 function serialize(t) {
   return {
     code: t.code, created: t.created, lastActive: t.lastActive, rev: t.rev, names: t.names, chat: t.chat, s: t.s,
-    players: [...t.players.values()].map((p) => ({ id: p.id, token: p.token, name: p.name, joined: p.joined })),
+    players: [...t.players.values()].map((p) => ({ id: p.id, token: p.token, account: p.account || null, name: p.name, joined: p.joined })),
   };
 }
 function deserialize(d) {
@@ -92,13 +96,12 @@ function install(nt) {
   const old = tables.get(nt.code);
   if (old) {
     for (const p of old.players.values()) {
-      tokens.delete(p.token);
       const np = nt.players.get(p.id);
       if (np) for (const sid of p.sockets) np.sockets.add(sid);
     }
   }
   tables.set(nt.code, nt);
-  for (const p of nt.players.values()) tokens.set(p.token, { code: nt.code, id: p.id });
+  for (const p of nt.players.values()) remember(nt, p);
   return nt;
 }
 function markDirty(t) {
@@ -155,7 +158,7 @@ function viewFor(t, pid) {
   const counts = {};
   for (const [u, h] of Object.entries(s.hands || {})) counts[u] = h.length;
   const players = [...t.players.values()].sort((a, b) => a.joined - b.joined)
-    .map((p) => ({ id: p.id, name: p.name, online: isOnline(p) }));
+    .map((p) => ({ id: p.id, name: p.name, online: isOnline(p), signedIn: !!p.account }));
   const gone = {};
   for (const [id, name] of Object.entries(t.names || {})) if (!t.players.has(id)) gone[id] = name;
   return {
@@ -201,10 +204,10 @@ function removePlayer(t, id) {
     E.applyRemove(t.s, id);
   }
   t.players.delete(id);
-  tokens.delete(p.token);
+  forget(t, p);
   for (const sid of p.sockets) {
     const sock = io.sockets.sockets.get(sid);
-    if (sock) { sock.leave(t.code); sock.data.code = null; sock.emit('left'); }
+    if (sock) { sock.leave(t.code); sock.data.code = null; sock.data.pid = null; sock.emit('left', { code: t.code }); }
   }
   if (t.players.size === 0) { tables.delete(t.code); markDirty(t); return; }
   if (t.s.host === id) {
@@ -217,18 +220,40 @@ function removePlayer(t, id) {
   broadcast(t);
 }
 
+function detach(socket) {
+  const t = tables.get(socket.data.code);
+  if (t) {
+    const p = t.players.get(socket.data.pid);
+    socket.leave(t.code);
+    if (p) { p.sockets.delete(socket.id); broadcast(t, false); }
+  }
+  socket.data.code = null; socket.data.pid = null;
+}
+
 function attach(socket, t, p) {
+  if (socket.data.code && (socket.data.code !== t.code || socket.data.pid !== p.id)) detach(socket);
   socket.data.code = t.code;
   socket.data.pid = p.id;
   socket.join(t.code);
   p.sockets.add(socket.id);
-  socket.emit('chatHistory', t.chat || []);
+  remember(t, p);
+  socket.emit('chatHistory', { code: t.code, list: t.chat || [] });
   broadcast(t);
+}
+
+// ---------- leaderboard ----------
+// A round counts when someone wins by playing their last card. Players who aren't signed in aren't counted.
+function recordRound(t, game) {
+  const s = t.s;
+  const acct = (id) => { const p = t.players.get(id); return p && p.account; };
+  Accounts.recordResult(game, acct(s.winner), s.order.map(acct))
+    .then((ok) => { if (ok) io.to(t.code).emit('recorded', { code: t.code, round: s.round }); })
+    .catch((e) => console.error('leaderboard save failed', e.message));
 }
 
 // ---------- sockets ----------
 io.on('connection', (socket) => {
-  socket.data = { token: null, code: null, pid: null, last: 0, burst: 0, lastChat: 0 };
+  socket.data = { token: null, account: null, code: null, pid: null, last: 0, burst: 0, lastChat: 0 };
 
   const limited = () => {
     const now = Date.now();
@@ -254,51 +279,123 @@ io.on('connection', (socket) => {
     return false;
   };
 
-  on('hello', async ({ token, code }, ack) => {
+  const findSeat = (t) => {
+    const acct = socket.data.account && socket.data.account.key;
+    const ps = [...t.players.values()];
+    return (acct && ps.find((x) => x.account === acct)) || ps.find((x) => x.token === socket.data.token && (!x.account || x.account === acct)) || null;
+  };
+  const needAccount = (ack) => {
+    if (socket.data.account) return true;
+    ack({ ok: false, needLogin: true, error: 'Sign in with your name and PIN first.' });
+    return false;
+  };
+  const peek = (t) => {
+    const host = t.players.get(t.s.host);
+    return {
+      code: t.code, status: t.s.status, round: t.s.round || 0, host: host ? host.name : null,
+      players: [...t.players.values()].sort((a, b) => a.joined - b.joined).map((x) => x.name),
+      full: t.players.size >= MAX_PLAYERS,
+    };
+  };
+  const lastFor = () => {
+    const keys = [socket.data.account ? 'a:' + socket.data.account.key : null, socket.data.token ? 't:' + socket.data.token : null].filter(Boolean);
+    for (const k of keys) {
+      const code = lastTable.get(k); const t = code && tables.get(code);
+      if (t && findSeat(t)) return { code, status: t.s.status, round: t.s.round || 0 };
+    }
+    return null;
+  };
+  // a signed-in player sitting in a seat claimed before accounts existed takes it over
+  const adoptSeat = (t, p) => {
+    if (socket.data.account && !p.account && ![...t.players.values()].some((x) => x.account === socket.data.account.key)) {
+      p.account = socket.data.account.key; p.name = socket.data.account.name; remember(t, p); return true;
+    }
+    return false;
+  };
+
+  on('hello', async ({ token, session }, ack) => {
     if (!validToken(token)) return ack({ ok: false, error: 'Bad token', build: BUILD });
     socket.data.token = token;
-    const link = tokens.get(token);
-    const tryCode = (link && link.code) || (validCode(code) ? code : null);
-    const t = tryCode ? await freshTable(tryCode) : null;
-    const p = t && [...t.players.values()].find((x) => x.token === token);
-    if (p) { attach(socket, t, p); return ack({ ok: true, code: t.code, build: BUILD }); }
-    ack({ ok: true, code: null, build: BUILD });
+    socket.data.account = session ? await Accounts.fromSession(session) : null;
+    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name } : null, sessionValid: !session || !!socket.data.account, last: lastFor() });
   });
 
-  on('create', ({ name }, ack) => {
+  on('login', async ({ name, pin }, ack) => {
+    const now = Date.now();
+    socket.data.logins = (socket.data.logins || []).filter((x) => now - x < 60_000);
+    if (socket.data.logins.length >= 12) return ack({ ok: false, error: 'Too many tries. Wait a minute.' });
+    socket.data.logins.push(now);
+    const r = await Accounts.login(name, pin);
+    if (!r.ok) return ack(r);
+    socket.data.account = { key: r.key, name: r.name };
+    const c = ctx();
+    if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
+    ack({ ok: true, session: r.session, name: r.name, created: r.created, last: lastFor() });
+  });
+
+  on('logout', async ({ session }, ack) => {
+    await Accounts.logout(session);
+    detach(socket);
+    socket.data.account = null;
+    ack({ ok: true });
+  });
+
+  // open a table from a link: sit back down if you have a seat, otherwise just look at it
+  on('open', async ({ code }, ack) => {
+    code = String(code || '').toUpperCase();
+    const t = validCode(code) ? await freshTable(code) : null;
+    if (!t) return ack({ ok: true, exists: false, code });
+    const seat = findSeat(t);
+    if (seat) {
+      adoptSeat(t, seat);
+      attach(socket, t, seat);
+      return ack({ ok: true, exists: true, seated: true, code });
+    }
+    ack({ ok: true, exists: true, seated: false, info: peek(t) });
+  });
+
+  // stop getting updates from the current table but keep the seat
+  on('away', (_, ack) => { detach(socket); ack({ ok: true }); });
+
+  on('create', (_, ack) => {
     if (!socket.data.token) return ack({ ok: false, error: 'Not ready yet. Try again.' });
+    if (!needAccount(ack)) return;
     if (tables.size >= MAX_TABLES) return ack({ ok: false, error: 'The server is full right now. Try again later.' });
-    const old = ctx(); if (old) removePlayer(old.t, old.me);
+    const old = ctx(); if (old && old.s.status === 'lobby') removePlayer(old.t, old.me);
     const id = rid(6);
     const t = newTable(id);
-    const p = { id, token: socket.data.token, name: cleanName(name), joined: Date.now(), sockets: new Set() };
-    t.players.set(id, p); tokens.set(p.token, { code: t.code, id });
+    const p = { id, token: socket.data.token, account: socket.data.account.key, name: socket.data.account.name, joined: Date.now(), sockets: new Set() };
+    t.players.set(id, p);
     attach(socket, t, p);
     ack({ ok: true, code: t.code });
   });
 
-  on('join', async ({ code, name }, ack) => {
+  on('join', async ({ code }, ack) => {
     if (!socket.data.token) return ack({ ok: false, error: 'Not ready yet. Try again.' });
+    if (!needAccount(ack)) return;
     code = String(code || '').toUpperCase();
     const t = validCode(code) ? await freshTable(code) : null;
-    if (!t) return ack({ ok: false, error: `No table with code ${code}. Check the code with whoever started it.` });
-    const mine = [...t.players.values()].find((x) => x.token === socket.data.token);
-    if (mine) {
-      if (name) mine.name = cleanName(name);
-      attach(socket, t, mine); return ack({ ok: true, code });
-    }
+    if (!t) return ack({ ok: false, error: `No table with code ${code}. It may have ended. Ask for a new link.` });
+    const mine = findSeat(t);
+    if (mine) { adoptSeat(t, mine); attach(socket, t, mine); return ack({ ok: true, code }); }
     if (t.players.size >= MAX_PLAYERS) return ack({ ok: false, error: 'That table is full (10 players).' });
-    const old = ctx(); if (old) removePlayer(old.t, old.me);
+    // leaving a lobby elsewhere frees that seat; a seat in a running game is kept so you can go back
+    const old = ctx(); if (old && old.t.code !== code && old.s.status === 'lobby') removePlayer(old.t, old.me);
     const id = rid(6);
-    const p = { id, token: socket.data.token, name: cleanName(name), joined: Date.now(), sockets: new Set() };
-    t.players.set(id, p); tokens.set(p.token, { code, id });
+    const p = { id, token: socket.data.token, account: socket.data.account.key, name: socket.data.account.name, joined: Date.now(), sockets: new Set() };
+    t.players.set(id, p);
     attach(socket, t, p);
     ack({ ok: true, code });
   });
 
   on('leave', (_, ack) => { const c = ctx(); if (c) removePlayer(c.t, c.me); ack({ ok: true }); });
 
-  on('rename', ({ name }, ack) => { const c = ctx(); if (!c) return ack({ ok: false }); c.p.name = cleanName(name); broadcast(c.t); ack({ ok: true }); });
+  on('leaderboard', async ({ game }, ack) => {
+    const g = Accounts.GAMES[game] ? game : 'all';
+    const rows = await Accounts.leaderboard(g, 50);
+    const mine = socket.data.account && socket.data.account.key;
+    ack({ ok: true, game: g, games: Accounts.GAMES, persistent: Accounts.persistent(), rows: rows.map((x) => ({ name: x.name, wins: x.wins, played: x.played, me: x.key === mine })) });
+  });
 
   // ----- host-only controls -----
   on('setting', ({ key }, ack) => {
@@ -337,6 +434,7 @@ io.on('connection', (socket) => {
     const c = ctx(); if (!c || !Number.isInteger(i)) return ack({ ok: false });
     const ok = act(c.t, (s) => E.applyPlay(s, c.me, i, color, !!called));
     ack({ ok, error: ok ? null : 'That card can’t be played right now.' });
+    if (ok && c.s.status === 'over' && c.s.winner === c.me) recordRound(c.t, 'lastcard');
   });
   on('draw', (_, ack) => { const c = ctx(); ack({ ok: !!c && act(c.t, (s) => E.applyDraw(s, c.me)) }); });
   on('pass', (_, ack) => { const c = ctx(); ack({ ok: !!c && act(c.t, (s) => E.applyPass(s, c.me)) }); });
@@ -357,7 +455,7 @@ io.on('connection', (socket) => {
   // ----- talk -----
   on('react', ({ e }, ack) => {
     const c = ctx(); if (!c || !REACTIONS.includes(e)) return ack({ ok: false });
-    io.to(c.t.code).emit('react', { e, by: c.me }); ack({ ok: true });
+    io.to(c.t.code).emit('react', { e, by: c.me, code: c.t.code }); ack({ ok: true });
   });
   on('chat', ({ text }, ack) => {
     const c = ctx(); if (!c) return ack({ ok: false });
@@ -369,7 +467,7 @@ io.on('connection', (socket) => {
     const m = { id: rid(5), by: c.me, text: msg, at: now };
     c.t.chat = (c.t.chat || []).concat(m).slice(-CHAT_KEEP);
     c.t.lastActive = now;
-    io.to(c.t.code).emit('chat', m);
+    io.to(c.t.code).emit('chat', { ...m, code: c.t.code });
     markDirty(c.t);
     ack({ ok: true });
   });
@@ -386,7 +484,6 @@ setInterval(() => {
   for (const t of tables.values()) {
     const anyoneHere = [...t.players.values()].some(isOnline);
     if (!anyoneHere && now - t.lastActive > TABLE_TTL_MS) {
-      for (const p of t.players.values()) tokens.delete(p.token);
       tables.delete(t.code);
     }
   }
@@ -402,6 +499,7 @@ async function shutdown(sig) {
     for (const code of tables.keys()) dirty.add(code);
     try { await flush(); await kv.quit(); } catch (e) { console.error(e.message); }
   }
+  await Accounts.close();
   io.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
@@ -409,5 +507,5 @@ async function shutdown(sig) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-const ready = connectStore().then(() => new Promise((r) => server.listen(PORT, () => { console.log(`Last Card ${BUILD} listening on :${PORT}`); r(); })));
+const ready = Promise.all([connectStore(), Accounts.init(process.env.STORE_URL || process.env.REDIS_URL)]).then(() => new Promise((r) => server.listen(PORT, () => { console.log(`Last Card ${BUILD} listening on :${PORT}`); r(); })));
 module.exports = { server, io, tables, ready, flush };

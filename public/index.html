@@ -228,6 +228,40 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
 #updateBar .btn{min-height:36px;background:#2a1d00;color:var(--gold);border:0}
 .confetti{position:fixed;top:-20px;width:10px;height:16px;z-index:21;pointer-events:none;border-radius:2px;animation:fall linear forwards}
 @keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
+
+/* ---------- v3: invite, sign-in, leaderboard ---------- */
+.invite-hero{display:flex;flex-direction:column;gap:6px}
+.invite-hero .bigcode{font-size:56px}
+.meta{color:var(--muted);font-size:15px;margin:0}
+.meta b{color:var(--ink);font-weight:600}
+.pchips{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
+.pchips li{background:rgba(245,239,227,.09);border:1px solid var(--line);border-radius:99px;padding:4px 12px;font-size:14px;font-weight:600}
+.err{color:#ff9a8c;font-size:14px;margin:0;min-height:1em}
+.linkbtn{color:var(--gold);font-weight:700;text-decoration:underline;text-underline-offset:3px;padding:4px 0;min-height:auto}
+.whoami{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;background:rgba(245,239,227,.06);border:1px solid var(--line)}
+.whoami .nm{flex:1;font-weight:700;font-size:17px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.whoami small{display:block;color:var(--muted);font-weight:500;font-size:13px}
+#homeAuth,#invAuth{display:flex;flex-direction:column;gap:12px}
+.pin-inp{letter-spacing:.5em;font-family:var(--display);font-weight:800;max-width:140px}
+.rejoin{display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;background:rgba(255,201,74,.12);border:1px solid rgba(255,201,74,.45)}
+.rejoin .tx{flex:1;min-width:0;font-size:14px;color:var(--muted)}
+.rejoin .tx b{display:block;color:var(--ink);font-size:16px}
+.or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+.tabs button{flex:none;min-height:38px;padding:0 14px;border-radius:99px;background:rgba(245,239,227,.07);border:1px solid var(--line);font-weight:700;font-size:14px}
+.tabs button[aria-pressed="true"]{background:var(--gold);color:#2a1d00;border-color:transparent}
+.lb{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.lb li{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:14px;background:rgba(245,239,227,.05)}
+.lb li.me{background:rgba(255,201,74,.14);box-shadow:inset 0 0 0 1px rgba(255,201,74,.5)}
+.lb .rk{width:30px;text-align:center;font-family:var(--display);font-weight:800;font-size:18px;color:var(--muted);font-variant-numeric:tabular-nums}
+.lb li:nth-child(1) .rk{color:var(--gold)}
+.lb .nm{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb .nm small{display:block;font-weight:500;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}
+.lb .w{font-family:var(--display);font-weight:800;font-size:22px;font-variant-numeric:tabular-nums;text-align:right}
+.lb .w small{display:block;font-family:var(--body);font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.boardhead{display:flex;align-items:center;gap:10px}
+.boardhead h1{font-family:var(--display);font-weight:800;font-size:30px;margin:0;flex:1}
 </style>
 </head>
 <body>
@@ -243,17 +277,25 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
       </div>
     </div>
 
-    <section class="panel" aria-labelledby="h-you">
-      <h2 id="h-you">Your name at the table</h2>
-      <label class="fld" for="nick">Shown to the other players
-        <input id="nick" class="inp" maxlength="18" placeholder="e.g. Priya" autocomplete="nickname">
-      </label>
-      <button id="createBtn" class="btn primary" disabled>Start a new table</button>
+    <div id="rejoinBox"></div>
+
+    <section class="panel" aria-labelledby="h-play">
+      <h2 id="h-play">Play with friends</h2>
+      <div id="homeAuth"></div>
+      <button id="createBtn" class="btn primary">Start a new table</button>
+      <div class="or">or join with a code</div>
       <div class="row">
         <input id="codeInp" class="inp code-inp grow" maxlength="4" placeholder="CODE" aria-label="Table code" autocomplete="off" autocapitalize="characters">
-        <button id="joinBtn" class="btn" disabled>Join</button>
+        <button id="joinBtn" class="btn">Join</button>
       </div>
+      <p class="err" id="homeErr" role="alert"></p>
       <p class="empty" id="homeNote">Connecting to the game server…</p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-lb">
+      <h2 id="h-lb">Leaderboard</h2>
+      <p class="empty">Wins across every game, for everyone who plays signed in.</p>
+      <button class="btn" id="boardBtn">See who’s winning</button>
     </section>
 
     <section class="panel" aria-labelledby="h-rules">
@@ -265,6 +307,21 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
         <li>Down to two cards? Tap <b>Last card!</b> before you play. Forget, and anyone can catch you for +2.</li>
       </ul>
     </section>
+  </div>
+</div>
+
+<!-- ============ INVITE (opened from a link) ============ -->
+<div id="invite" class="screen" hidden>
+  <div class="scroll" id="inviteBody"></div>
+</div>
+
+<!-- ============ LEADERBOARD ============ -->
+<div id="board" class="screen" hidden>
+  <div class="scroll">
+    <div class="boardhead"><button class="btn small" id="boardBack" aria-label="Back">←</button><h1>Leaderboard</h1></div>
+    <div class="tabs" id="boardTabs" role="group" aria-label="Choose a game"></div>
+    <ol class="lb" id="boardList"><li><span class="nm">Loading…</span></li></ol>
+    <p class="empty" id="boardNote"></p>
   </div>
 </div>
 
@@ -327,6 +384,7 @@ label.fld{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--
     <ul class="plist" id="psList"></ul>
     <p class="empty" id="psNote"></p>
     <button class="toggle" id="soundBtn" aria-pressed="true"><span class="sw"></span><span><b>Sounds</b><span class="d">A soft chime on your turn, a fanfare when someone wins, a pop for new messages.</span></span></button>
+    <button class="btn" id="psBoard">View leaderboard</button>
     <div class="row"><button class="btn grow" id="psClose">Close</button><button class="btn danger grow" id="psLeave">Leave table</button></div>
   </div>
 </div>
@@ -345,9 +403,9 @@ function load(k){try{return localStorage.getItem(k)||''}catch(e){return ''}}
 
 let token=load('lc-token');
 if(!/^[a-zA-Z0-9]{16,64}$/.test(token)){token=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');store('lc-token',token);}
-
-let away=false,G=null,view='home',armedCall=false,seenV=-1,lastTopV=-1,pendingWild=null,ready=false,build=null;
-let chatMsgs=[],unread=0;
+let session=load('lc-session'),me=null,build=null,last=null,ready=false;
+let view='home',curCode=null,G=null,inviteInfo=null,boardGame='all',boardFrom='home';
+let armedCall=false,seenV=-1,lastTopV=-1,pendingWild=null,scrollToPlayable=false,chatMsgs=[],unread=0;
 const socket=io({transports:['websocket','polling']});
 
 /* ---------- sounds (made in the browser, no files) ---------- */
@@ -395,7 +453,6 @@ function confetti(n){
   }
 }
 
-function myNick(){return ($('#nick').value||'').trim().slice(0,18);}
 function playerOf(u){return G&&G.players.find(p=>p.id===u);}
 function nameOf(u){const p=playerOf(u);return p?p.name:(G&&G.gone&&G.gone[u])||'Player';}
 function isOnline(u){const p=playerOf(u);return !!(p&&p.online);}
@@ -424,85 +481,204 @@ function backHTML(w){return `<div class="card back" style="--w:${w}px"><span cla
 $('#fan').innerHTML=['r7','gS','wF'].map((c,i)=>cardHTML(c,{w:48,style:`transform:rotate(${(i-1)*16}deg)`})).join('');
 
 /* ---------- server calls ---------- */
-function send(ev,data){
+function send(ev,data,quiet){
   return new Promise(res=>{
-    if(!socket.connected){toast('Not connected yet. Hang on a second.');return res({ok:false});}
+    if(!socket.connected){if(!quiet)toast('Not connected yet. Hang on a second.');return res({ok:false,error:'Not connected yet. Hang on a second.'});}
     socket.timeout(8000).emit(ev,data||{},(err,r)=>{
-      if(err){toast('The server didn’t answer. Try again.');return res({ok:false});}
-      if(r&&!r.ok&&r.error) toast(r.error);
+      if(err){if(!quiet)toast('The server didn’t answer. Try again.');return res({ok:false,error:'The server didn’t answer. Try again.'});}
+      if(r&&!r.ok&&r.error&&!quiet) toast(r.error);
       res(r||{ok:false});
     });
   });
 }
 
-/* ---------- connection ---------- */
+/* ---------- screens ---------- */
+function show(v){
+  view=v;
+  for(const id of ['home','invite','board','game']) $('#'+id).hidden=id!==v;
+  if(v!=='game'){$('#psheet').hidden=true;$('#picker').hidden=true;$('#chat').hidden=true;}
+}
+function setHash(h){const want=h?'#'+h:'';if(location.hash!==want) history.replaceState(null,'',location.pathname+want);}
 function hashCode(){const m=/^#([A-Za-z]{4})$/.exec(location.hash||'');return m?m[1].toUpperCase():null;}
-$('#nick').value=load('lc-nick');
-if(hashCode()) $('#codeInp').value=hashCode();
 
+function route(){
+  if(!ready) return;
+  const code=hashCode();
+  if(code) openTable(code);
+  else if(location.hash==='#leaderboard') showBoard('home');
+  else showHome();
+}
+window.addEventListener('hashchange',route);
+
+/* ---------- accounts ---------- */
+function authFields(prefix){
+  return `<label class="fld" for="${prefix}Name">Your name
+      <input id="${prefix}Name" class="inp" maxlength="18" placeholder="Priya" autocomplete="nickname" value="${esc(load('lc-nick'))}">
+    </label>
+    <label class="fld" for="${prefix}Pin">4-digit PIN
+      <input id="${prefix}Pin" class="inp pin-inp" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="••••" type="password">
+    </label>
+    <p class="empty">New here? Pick any name and PIN. Use the same ones next time, on any phone, to keep your wins.</p>`;
+}
+function whoamiHTML(sub){return `<div class="whoami"><span class="nm">${esc(me.name)}<small>${esc(sub)}</small></span><button class="linkbtn" data-switch="1">Not you?</button></div>`;}
+async function doLogin(prefix,errEl){
+  const name=($('#'+prefix+'Name')||{}).value||'',pin=($('#'+prefix+'Pin')||{}).value||'';
+  errEl.textContent='';
+  if(name.trim().length<2){errEl.textContent='Type your name first.';$('#'+prefix+'Name').focus();return false;}
+  if(!/^\d{4}$/.test(pin)){errEl.textContent='Choose a 4-digit PIN (numbers only).';$('#'+prefix+'Pin').focus();return false;}
+  const r=await send('login',{name,pin},true);
+  if(!r.ok){errEl.textContent=r.error||'Couldn’t sign in. Try again.';return false;}
+  me={name:r.name};session=r.session;store('lc-session',session);store('lc-nick',r.name);last=r.last||last;
+  toast(r.created?`Welcome, ${r.name}! Remember your PIN to keep your wins.`:`Signed in as ${r.name}`);
+  return true;
+}
+async function switchUser(){
+  await send('logout',{session},true);
+  me=null;session='';store('lc-session','');
+  if(view==='game'){curCode=null;G=null;setHash('');}
+  route();
+}
+document.addEventListener('click',e=>{if(e.target.closest('[data-switch]'))switchUser();});
+
+/* ---------- connection ---------- */
 socket.on('connect',async()=>{
   $('#conn').hidden=true;
-  const r=await send('hello',{token,code:hashCode()||load('lc-code')||undefined});
+  const r=await send('hello',{token,session},true);
   if(r.build){if(!build) build=r.build; else if(r.build!==build) $('#updateBar').hidden=false;}
-  ready=true;$('#createBtn').disabled=false;$('#joinBtn').disabled=false;
-  $('#homeNote').textContent=hashCode()?'Type your name, then tap Join.':'Start a table, then send your friends the link.';
-  if(r.ok&&r.code&&!away){showGame(r.code);if(myNick())send('rename',{name:myNick()});}
-  else if(hashCode()&&myNick()&&!away) joinTable(hashCode());
-  else if(view==='game'&&!(r.ok&&r.code)){toast('That table has closed');goHome(true);}
+  if(r.ok){me=r.account||null;if(!r.sessionValid){session='';store('lc-session','');}last=r.last||null;}
+  ready=true;$('#homeNote').textContent='';
+  if(view==='game'&&curCode&&!hashCode()) setHash(curCode);
+  route();
 });
 socket.on('disconnect',()=>{setTimeout(()=>{if(!socket.connected)$('#conn').hidden=false;},1500);});
 socket.on('connect_error',()=>{if(!ready)$('#homeNote').textContent='Waking up the game server. This can take up to a minute the first time.';});
-socket.on('state',s=>onState(s));
-socket.on('left',()=>{store('lc-code','');toast('You left the table');goHome(true);});
-socket.on('react',m=>{if(!away&&['😂','😱','😤','👏'].includes(m.e))floatEmoji(m.e,m.by);});
-socket.on('chatHistory',list=>{chatMsgs=Array.isArray(list)?list.slice(-60):[];renderChat();});
+socket.on('state',s=>{if(s&&s.code===curCode)onState(s);});
+socket.on('left',m=>{if(m&&m.code===curCode){toast('You left the table');curCode=null;G=null;setHash('');showHome();}});
+socket.on('react',m=>{if(m&&m.code===curCode&&view==='game'&&['😂','😱','😤','👏'].includes(m.e))floatEmoji(m.e,m.by);});
+socket.on('recorded',m=>{if(m&&m.code===curCode)toast('Result saved to the leaderboard');});
+socket.on('chatHistory',m=>{if(m&&m.code===curCode){chatMsgs=Array.isArray(m.list)?m.list.slice(-60):[];renderChat();}});
 socket.on('chat',m=>{
-  if(away||!m||!m.text) return;
+  if(!m||m.code!==curCode||!m.text) return;
   chatMsgs.push(m);if(chatMsgs.length>60)chatMsgs.shift();
   const open=!$('#chat').hidden;
   renderChat();
-  if(m.by!==(G&&G.me)){
+  if(G&&m.by!==G.me){
     Snd.play('chat');
-    if(!open){unread++;updateBadge();toast('',`chat`,`<b>${esc(nameOf(m.by))}:</b> ${esc(m.text)}`);}
+    if(!open){unread++;updateBadge();toast('','chat',`<b>${esc(nameOf(m.by))}:</b> ${esc(m.text)}`);}
   }
 });
 $('#reloadBtn').onclick=()=>location.reload();
 
-$('#nick').addEventListener('change',()=>store('lc-nick',myNick()));
-$('#codeInp').addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z]/g,'');});
+/* ---------- home ---------- */
+async function refreshLast(){const r=await send('hello',{token,session},true);if(r.ok){last=r.last||null;}}
+function showHome(){
+  show('home');setHash('');
+  $('#homeAuth').innerHTML=me?whoamiHTML('Your wins are saved to the leaderboard'):authFields('h');
+  $('#homeErr').textContent='';
+  const lb=$('#rejoinBox');
+  lb.innerHTML=last?`<div class="rejoin"><span class="tx"><b>Your game at table ${esc(last.code)}</b>${last.status==='playing'?'Round '+(last.round||1)+' is in progress':last.status==='over'?'Round over, waiting for the next deal':'Waiting in the lobby'}</span><button class="btn primary small" id="rejoinBtn">Rejoin</button></div>`:'';
+  const rb=$('#rejoinBtn');if(rb) rb.onclick=()=>openTable(last.code);
+}
+async function ensureSignedIn(errEl){return me?true:await doLogin('h',errEl);}
 $('#createBtn').addEventListener('click',async()=>{
-  store('lc-nick',myNick());$('#createBtn').disabled=true;
-  const r=await send('create',{name:myNick()});
+  const err=$('#homeErr');if(!await ensureSignedIn(err)) return;
+  $('#createBtn').disabled=true;
+  const r=await send('create',{},true);
   $('#createBtn').disabled=false;
-  if(r.ok){away=false;showGame(r.code);}
+  if(r.ok) enterGame(r.code); else err.textContent=r.error||'Couldn’t start a table.';
 });
-$('#joinBtn').addEventListener('click',()=>{const c=$('#codeInp').value.trim();if(c.length===4)joinTable(c);else toast('Enter the 4-letter table code');});
+$('#codeInp').addEventListener('input',e=>{e.target.value=e.target.value.toUpperCase().replace(/[^A-Z]/g,'');});
+$('#joinBtn').addEventListener('click',async()=>{
+  const c=$('#codeInp').value.trim();const err=$('#homeErr');
+  if(c.length!==4){err.textContent='Enter the 4-letter table code.';return;}
+  if(!await ensureSignedIn(err)) return;
+  const r=await send('join',{code:c},true);
+  if(r.ok) enterGame(r.code); else err.textContent=r.error||'Couldn’t join that table.';
+});
 $('#codeInp').addEventListener('keydown',e=>{if(e.key==='Enter')$('#joinBtn').click();});
+$('#boardBtn').onclick=()=>showBoard('home');
 
-async function joinTable(code){
-  away=false;
-  store('lc-nick',myNick());
-  const r=await send('join',{code,name:myNick()});
-  if(r.ok) showGame(r.code);
-  else if(location.hash) history.replaceState(null,'',location.pathname);
+/* ---------- opening a table link ---------- */
+async function openTable(code){
+  const r=await send('open',{code},true);
+  if(!r.ok){showHome();toast(r.error||'Couldn’t open that table.');return;}
+  if(!r.exists){showInvite({code,missing:true});return;}
+  if(r.seated){enterGame(code);return;}
+  showInvite(r.info);
 }
-function showGame(code){
-  view='game';$('#home').hidden=true;$('#game').hidden=false;$('#gCode').textContent=code;
-  store('lc-code',code);
-  if(location.hash!=='#'+code) history.replaceState(null,'','#'+code);
-  if(!G||G.code!==code){G=null;seenV=-1;unread=0;updateBadge();$('#gBody').innerHTML='<div class="tablearea"><p class="empty">Loading the table…</p></div>';}
+function showInvite(info){
+  if(curCode&&curCode!==info.code){curCode=null;G=null;}
+  inviteInfo=info;show('invite');setHash(info.code);
+  const body=$('#inviteBody');
+  if(info.missing){
+    body.innerHTML=`<div class="invite-hero"><p class="eyebrow">Table ${esc(info.code)}</p><h2 class="win-name" style="color:var(--ink)">This table isn’t open anymore</h2><p class="meta">Tables close a few hours after everyone leaves. Ask your friend for a fresh link, or start your own.</p></div>
+      <button class="btn primary" id="invOwn">Start my own table</button>`;
+    $('#invOwn').onclick=()=>showHome();return;
+  }
+  const status=info.status==='lobby'?'Waiting in the lobby for the host to deal':info.status==='playing'?`Round ${info.round} is in progress. You’ll be dealt in next round.`:'Between rounds. You’ll be dealt in next round.';
+  body.innerHTML=`
+    <div class="invite-hero">
+      <p class="eyebrow">You’re invited to Last Card</p>
+      <p class="bigcode">${esc(info.code)}</p>
+      <p class="meta">${info.host?`Hosted by <b>${esc(info.host)}</b> · `:''}${info.players.length} player${info.players.length===1?'':'s'}</p>
+      <p class="meta">${esc(status)}</p>
+    </div>
+    <ul class="pchips">${info.players.map(n=>`<li>${esc(n)}</li>`).join('')}</ul>
+    <section class="panel">
+      <div id="invAuth">${me?whoamiHTML('Joining as you'):authFields('i')}</div>
+      <button class="btn primary" id="invJoin" ${info.full?'disabled':''}>${info.full?'This table is full':me?'Join table':'Join table'}</button>
+      <p class="err" id="invErr" role="alert"></p>
+    </section>
+    <div class="or">not what you wanted?</div>
+    <button class="btn" id="invOwn">Start my own table instead</button>`;
+  $('#invOwn').onclick=()=>showHome();
+  const go=async()=>{
+    const err=$('#invErr');const btn=$('#invJoin');
+    if(!me&&!await doLogin('i',err)) return;
+    btn.disabled=true;
+    const r=await send('join',{code:info.code},true);
+    btn.disabled=false;
+    if(r.ok) enterGame(info.code);
+    else if(r.needLogin){me=null;showInvite(info);}
+    else err.textContent=r.error||'Couldn’t join. Try again.';
+  };
+  $('#invJoin').onclick=go;
+  const pin=$('#iPin');if(pin) pin.addEventListener('keydown',e=>{if(e.key==='Enter')go();});
 }
-function goHome(clearHash){
-  view='home';G=null;$('#game').hidden=true;$('#home').hidden=false;
-  $('#psheet').hidden=true;$('#picker').hidden=true;$('#chat').hidden=true;
-  if(clearHash!==false) history.replaceState(null,'',location.pathname);
+
+/* ---------- leaderboard ---------- */
+async function showBoard(from){
+  boardFrom=from||'home';show('board');
+  if(boardFrom==='home') setHash('leaderboard');
+  $('#boardList').innerHTML='<li><span class="nm">Loading…</span></li>';
+  const r=await send('leaderboard',{game:boardGame},true);
+  if(!r.ok){$('#boardList').innerHTML='<li><span class="nm">Couldn’t load the leaderboard. Try again.</span></li>';return;}
+  const games=Object.assign({all:'All games'},r.games||{});
+  $('#boardTabs').innerHTML=Object.entries(games).map(([k,v])=>`<button data-g="${esc(k)}" aria-pressed="${k===r.game}">${esc(v)}</button>`).join('');
+  $('#boardTabs').onclick=e=>{const b=e.target.closest('[data-g]');if(b){boardGame=b.dataset.g;showBoard(boardFrom);}};
+  $('#boardList').innerHTML=r.rows.length?r.rows.map((x,i)=>{
+    const pct=x.played?Math.round(100*x.wins/x.played):0;
+    return `<li class="${x.me?'me':''}"><span class="rk">${i+1}</span><span class="nm">${esc(x.name)}${x.me?' (you)':''}<small>${x.played} game${x.played===1?'':'s'} · ${pct}% won</small></span><span class="w">${x.wins}<small>win${x.wins===1?'':'s'}</small></span></li>`;
+  }).join(''):'<li><span class="nm">No wins yet<small>Finish a round while signed in and you’ll show up here.</small></span></li>';
+  $('#boardNote').textContent=(me?'':'Sign in on the home screen to get on the board. ')+(r.persistent?'':'The leaderboard isn’t saved permanently yet, so it may reset.');
+}
+$('#boardBack').onclick=()=>{if(boardFrom==='game'&&curCode){show('game');setHash(curCode);render();}else showHome();};
+
+/* ---------- game ---------- */
+function enterGame(code){
+  if(curCode!==code){
+    curCode=code;G=null;seenV=-1;lastTopV=-1;armedCall=false;chatMsgs=[];unread=0;updateBadge();renderChat();
+    $('#gBody').innerHTML='<div class="tablearea"><p class="empty">Loading the table…</p></div>';
+  }
+  show('game');setHash(code);$('#gCode').textContent=code;
+  if(G) render();
 }
 $('#backBtn').addEventListener('click',async()=>{
-  const seated=G&&G.status!=='lobby'&&G.order.includes(G.me);
-  const code=G&&G.code;
-  if(!seated){await send('leave');store('lc-code','');}
-  goHome(true);
-  if(seated){away=true;$('#codeInp').value=code;toast('Your seat is saved. Tap Join to go back to table '+code+'.');}
+  curCode=null;G=null;
+  await send('away',{},true);
+  await refreshLast();
+  showHome();
+  if(last) toast('Your seat is saved. Tap Rejoin to go back.');
 });
 
 function floatEmoji(e,by){
@@ -517,10 +693,10 @@ function updateBadge(){const b=$('#chatBadge');b.hidden=!unread;b.textContent=un
 function renderChat(){
   const box=$('#msgs');if(!box) return;
   if(!chatMsgs.length){box.innerHTML='<p class="empty">No messages yet. Say hi, or tap a quick reply below.</p>';return;}
-  const me=G&&G.me;
+  const mine=G&&G.me;
   box.innerHTML=chatMsgs.map(m=>{
     const t=new Date(m.at);const hh=t.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
-    return `<div class="msg ${m.by===me?'mine':''}">${m.by===me?'':`<span class="who">${esc(nameOf(m.by))}</span>`}<span class="txt">${esc(m.text)}</span><time>${esc(hh)}</time></div>`;
+    return `<div class="msg ${m.by===mine?'mine':''}">${m.by===mine?'':`<span class="who">${esc(nameOf(m.by))}</span>`}<span class="txt">${esc(m.text)}</span><time>${esc(hh)}</time></div>`;
   }).join('');
   box.scrollTop=box.scrollHeight;
 }
@@ -541,11 +717,9 @@ $('#quick').addEventListener('click',e=>{
 });
 
 function onState(s){
-  if(away) return;
   const prev=G;G=s;G.clockSkew=Date.now()-s.now;
-  if(view!=='game') showGame(s.code);
   const lg=(G.log||[]).slice(-1)[0];
-  if(seenV>=0&&lg&&lg.v>seenV) toast(fmt(lg.msg),lg.kind);
+  if(view==='game'&&seenV>=0&&lg&&lg.v>seenV) toast(fmt(lg.msg),lg.kind);
   seenV=G.v||0;
   const mine=G.status==='playing'&&G.order[G.turn]===G.me;
   const wasMine=prev&&prev.status==='playing'&&prev.order[prev.turn]===prev.me&&prev.round===G.round;
@@ -577,9 +751,9 @@ function renderLobby(){
   $('#gBody').innerHTML=`<div class="scroll">
     <div><p class="eyebrow">Table code</p><p class="bigcode">${esc(G.code)}</p></div>
     <div class="invite"><button class="btn primary" id="shareBtn">Invite friends</button><button class="btn" id="copyBtn">Copy link</button></div>
-    <p class="empty">Friends open the link, type their name and tap Join. Or they can enter the code on the home screen.</p>
+    <p class="empty">Friends open the link and tap Join. The first time, they pick a name and a 4-digit PIN.</p>
     <section class="panel"><h2>Players · ${ps.length} of 10</h2>
-      <ul class="plist">${ps.map(p=>`<li>${avatar(p.id)}<span class="nm">${esc(p.name)}${p.id===G.me?' <small>(you)</small>':''}${p.id===G.host?' <small>· host</small>':''}</span>${wins[p.id]?`<small>${wins[p.id]} win${wins[p.id]>1?'s':''}</small>`:''}</li>`).join('')}</ul>
+      <ul class="plist">${ps.map(p=>`<li>${avatar(p.id)}<span class="nm">${esc(p.name)}${p.id===G.me?' <small>(you)</small>':''}${p.id===G.host?' <small>· host</small>':''}${p.signedIn?'':' <small>· not signed in</small>'}</span>${wins[p.id]?`<small>${wins[p.id]} win${wins[p.id]>1?'s':''}</small>`:''}</li>`).join('')}</ul>
     </section>
     <section class="panel"><h2>House rules</h2>
       ${host?'':'<p class="empty">Only the host can change these.</p>'}
@@ -613,12 +787,11 @@ function renderOpps(){
   }).join('');
 }
 
-let scrollToPlayable=false;
 function renderTable(){
   const prevScroll=$('#hand')?$('#hand').scrollLeft:0;
-  const me=G.me;const seatedMe=G.order.includes(me);
+  const me_=G.me;const seatedMe=G.order.includes(me_);
   const hand=G.hand||[];
-  const myTurn=G.status==='playing'&&G.order[G.turn]===me;
+  const myTurn=G.status==='playing'&&G.order[G.turn]===me_;
   if(hand.length!==2||!myTurn) armedCall=false;
   const top=G.top;const cur=CVAR[G.color]||'transparent';
   const curU=G.order[G.turn];
@@ -649,13 +822,14 @@ function renderTable(){
       <div class="status"><span class="big ${myTurn?'mine':''}">${esc(big)}</span><span class="hint">${esc(hint)}</span></div>
     </div>
     <div class="actions" id="actions"></div>
-    ${seatedMe?`<div class="handwrap" id="handwrap"><div class="handlabel"><span>Your hand · ${hand.length}</span><span id="swipeHint">${G.wins[me]?G.wins[me]+'★ wins':''}</span></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
+    ${seatedMe?`<div class="handwrap" id="handwrap"><div class="handlabel"><span>Your hand · ${hand.length}</span><span id="swipeHint">${G.wins[me_]?G.wins[me_]+'★ wins':''}</span></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
       :`<div class="spect">You’re watching this round. You’ll be dealt in when the next round starts.</div>`}
     ${G.status==='over'?overHTML():''}`;
   renderOpps();renderActions();
   if(seatedMe) renderHand(hand,myTurn,prevScroll);
   $('#drawPile').onclick=()=>{if(G.status!=='playing')return;if(!myTurn){toast('Wait for your turn');return;}if(G.drew){toast('You already drew. Play it or pass.');return;}send('draw');};
   const nb=$('#nextBtn');if(nb)nb.onclick=()=>send('start');
+  const ob=$('#overBoard');if(ob)ob.onclick=()=>showBoard('game');
   wireClaim($('#gBody'));
 }
 
@@ -672,7 +846,7 @@ function updateHandEdges(){
 function renderHand(hand,myTurn,prevScroll){
   const el=$('#hand');const R=stateForRules();
   const idx=hand.map((c,i)=>i).sort((a,b)=>(CORD.indexOf(cc(hand[a]))-CORD.indexOf(cc(hand[b])))||(VORD.indexOf(cv(hand[a]))-VORD.indexOf(cv(hand[b]))));
-  if(myTurn&&G.drew){const last=hand.length-1;idx.splice(idx.indexOf(last),1);idx.unshift(last);}
+  if(myTurn&&G.drew){const lastI=hand.length-1;idx.splice(idx.indexOf(lastI),1);idx.unshift(lastI);}
   const w=window.innerWidth<370?70:80;
   el.innerHTML=idx.map(i=>{
     const c=hand[i];let cls='';
@@ -680,7 +854,6 @@ function renderHand(hand,myTurn,prevScroll){
     if(myTurn&&G.drew&&i===hand.length-1) cls+=' fresh';
     return cardHTML(c,{w,tag:'button',cls,attrs:`data-i="${i}"`});
   }).join('');
-  // Show at least 60% of every card; if they still don't fit, the hand scrolls sideways.
   const avail=el.clientWidth-32;const n=idx.length;
   let ov=6;if(n>1&&n*w+(n-1)*6>avail){ov=Math.max(-w*0.4,(avail-w)/(n-1)-w);}
   el.style.setProperty('--ov',ov+'px');
@@ -719,14 +892,14 @@ $('#pickCancel').onclick=()=>{pendingWild=null;$('#picker').hidden=true;};
 function renderActions(){
   const el=$('#actions');if(!el||!G) return;
   if(G.status!=='playing'){el.innerHTML='';return;}
-  const me=G.me;const hand=G.hand||[];const myTurn=G.order[G.turn]===me;const seated=G.order.includes(me);
+  const me_=G.me;const hand=G.hand||[];const myTurn=G.order[G.turn]===me_;const seated=G.order.includes(me_);
   const idleMs=Date.now()-G.clockSkew-(G.turnAt||0);
   const b=[];
   if(myTurn&&!G.drew) b.push(`<button class="btn" data-a="draw">${G.pending>0?'Draw '+G.pending:'Draw'}</button>`);
   if(myTurn&&G.drew) b.push(`<button class="btn" data-a="pass">Pass</button>`);
   if(myTurn&&hand.length===2) b.push(`<button class="btn call ${armedCall?'armed':''}" data-a="arm" aria-pressed="${armedCall}">${armedCall?'Last card! ✓':'Last card!'}</button>`);
-  if(G.unsafe===me) b.push(`<button class="btn call" data-a="late">Say Last card!</button>`);
-  if(seated&&G.unsafe&&G.unsafe!==me) b.push(`<button class="btn catch" data-a="catch">Catch ${esc(nameOf(G.unsafe))}! +2</button>`);
+  if(G.unsafe===me_) b.push(`<button class="btn call" data-a="late">Say Last card!</button>`);
+  if(seated&&G.unsafe&&G.unsafe!==me_) b.push(`<button class="btn catch" data-a="catch">Catch ${esc(nameOf(G.unsafe))}! +2</button>`);
   if(seated&&!myTurn&&idleMs>45000) b.push(`<button class="btn small" data-a="skip">Skip ${esc(nameOf(G.order[G.turn]))}</button>`);
   el.innerHTML=b.join('');
   el.onclick=e=>{
@@ -745,25 +918,28 @@ function overHTML(){
     <h3 class="win-name" id="winT">${esc(nameOf(G.winner))}${G.winner===G.me?' (you!)':''} wins</h3>
     <ul class="score">${ps.map(u=>`<li>${avatar(u)}<span class="nm">${esc(nameOf(u))}</span><span class="left">${count(u)?count(u)+' left':'out'}</span><span class="w">${G.wins[u]||0} ★</span></li>`).join('')}</ul>
     ${isHost()?`<button class="btn primary" id="nextBtn">Deal the next round</button><p class="empty">Anyone who joined the table meanwhile gets dealt in.</p>`:hostWaitHTML('deal the next round')}
+    <button class="btn" id="overBoard">View leaderboard</button>
   </div></div>`;
 }
 
 /* ---------- players sheet ---------- */
 $('#playersBtn').onclick=()=>{$('#psheet').hidden=false;renderPlayersSheet();};
 $('#psClose').onclick=()=>{$('#psheet').hidden=true;};
-$('#psLeave').onclick=async()=>{await send('leave');store('lc-code','');goHome(true);};
+$('#psBoard').onclick=()=>{$('#psheet').hidden=true;showBoard('game');};
+$('#psLeave').onclick=async()=>{curCode=null;G=null;last=null;await send('leave');showHome();};
 $('#soundBtn').onclick=()=>{Snd.on=!Snd.on;store('lc-sound',Snd.on?'on':'off');$('#soundBtn').setAttribute('aria-pressed',String(Snd.on));if(Snd.on)Snd.play('turn');};
 function renderPlayersSheet(){
   if(!G) return;
   const host=isHost();
   $('#soundBtn').setAttribute('aria-pressed',String(Snd.on));
-  $('#psNote').textContent=host?'You’re the host: you deal each round. Removing someone puts their cards back in the deck.':'You can remove players who have gone offline so the game keeps moving.';
+  const unsigned=G.players.some(p=>!p.signedIn);
+  $('#psNote').textContent=(host?'You’re the host: you deal each round. Removing someone puts their cards back in the deck.':'You can remove players who have gone offline so the game keeps moving.')+(unsigned?' Players marked “not signed in” don’t get leaderboard wins.':'');
   $('#psList').innerHTML=G.players.map(p=>{
     const inRound=G.status!=='lobby'&&G.order.includes(p.id);
     const btns=[];
     if(p.id!==G.me&&host) btns.push(`<button class="btn small" data-host="${esc(p.id)}">Make host</button>`);
     if(p.id!==G.me&&(host||!p.online)) btns.push(`<button class="btn small" data-rm="${esc(p.id)}">Remove</button>`);
-    return `<li>${avatar(p.id)}<span class="nm">${esc(p.name)}${p.id===G.me?' <small>(you)</small>':''}${p.id===G.host?' <small>· host</small>':''}<br><small>${p.online?'Online':'Offline'} · ${inRound?count(p.id)+' cards':'Waiting for next round'}</small></span>${btns.join('')}</li>`;
+    return `<li>${avatar(p.id)}<span class="nm">${esc(p.name)}${p.id===G.me?' <small>(you)</small>':''}${p.id===G.host?' <small>· host</small>':''}<br><small>${p.online?'Online':'Offline'} · ${inRound?count(p.id)+' cards':'Waiting for next round'}${p.signedIn?'':' · not signed in'}</small></span>${btns.join('')}</li>`;
   }).join('');
   $('#psList').onclick=e=>{
     const rm=e.target.closest('[data-rm]');if(rm){rm.disabled=true;send('remove',{id:rm.dataset.rm});return;}
@@ -771,7 +947,13 @@ function renderPlayersSheet(){
   };
 }
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){$('#picker').hidden=true;pendingWild=null;$('#psheet').hidden=true;$('#chat').hidden=true;}});
-window.addEventListener('hashchange',()=>{const c=hashCode();if(c&&(!G||G.code!==c)){$('#codeInp').value=c;if(myNick())joinTable(c);}});
+
+// Opened from an invite link: show the invite straight away instead of the home screen.
+if(hashCode()){
+  show('invite');
+  $('#inviteBody').innerHTML=`<div class="invite-hero"><p class="eyebrow">You\u2019re invited to Last Card</p><p class="bigcode">${esc(hashCode())}</p><p class="meta" id="invWait">Opening the table…</p></div>`;
+  socket.on('connect_error',()=>{const w=$('#invWait');if(w&&!ready)w.textContent='Waking up the game server. This can take up to a minute the first time.';});
+}
 </script>
 </body>
 </html>

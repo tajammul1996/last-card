@@ -14,6 +14,10 @@ Every push to `main` redeploys automatically.
 
 The blueprint also creates **last-card-store**, a free Render Key Value instance. The server saves every table there, so games carry on after a redeploy or restart: phones reconnect on their own and players keep their seats, hands and chat. Without `REDIS_URL` the server still runs, keeping tables in memory only.
 
+### Accounts and leaderboard (Upstash)
+
+Players sign in with a name and a 4-digit PIN, and the leaderboard counts wins across all games. These live in a permanent store set by `STORE_URL` (an [Upstash](https://upstash.com) Redis URL, free plan). In Render: **last-card → Environment → STORE_URL**, paste the URL (`rediss://default:…@….upstash.io:6379`) and save. Without `STORE_URL` the server falls back to the Render Key Value store, which can be wiped when Render restarts it.
+
 **Free-tier note:** Render puts free web services to sleep after about 15 minutes without visitors. The first person to open the link afterwards waits up to a minute while it wakes up.
 
 ## Run locally
@@ -21,7 +25,7 @@ The blueprint also creates **last-card-store**, a free Render Key Value instance
 ```bash
 npm install
 npm start          # http://localhost:3000
-npm test           # 25 full rounds with 5 simulated phones, then a restart test (needs redis-server)
+npm test           # full rounds with simulated phones, sign-in, link switching, leaderboard, then a restart test (needs redis-server)
 ```
 
 ## How it works
@@ -34,6 +38,9 @@ Players are remembered by a random token in the browser, so refreshing or briefl
 
 ## Features
 
+- Invite links open a join screen for that table, with the host and players listed. Opening a different table's link switches to it cleanly; a seat in a running game is kept so you can go back.
+- Sign in with a name and 4-digit PIN on any phone. Five wrong PINs lock that name for 10 minutes.
+- Leaderboard of wins across all games, with a tab per game.
 - Only the host (whoever created the table) deals and changes house rules. The host can hand that role to someone else, and if the host goes offline anyone can take over.
 - Table chat with quick replies and emoji reactions.
 - A soft chime on your turn, a fanfare and confetti when a round is won, a pop for new messages. Players can turn sounds off under **Players**.

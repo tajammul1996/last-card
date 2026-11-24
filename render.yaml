@@ -13,6 +13,10 @@ services:
           name: last-card-store
           type: keyvalue
           property: connectionString
+      # Permanent store for accounts and the leaderboard (Upstash Redis URL, starting rediss://).
+      # Set the value in the Render dashboard; it is never kept in this repo.
+      - key: STORE_URL
+        sync: false
 
   # Keeps every table saved while the game server redeploys or restarts.
   - type: keyvalue
