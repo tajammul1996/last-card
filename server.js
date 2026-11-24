@@ -164,7 +164,7 @@ function viewFor(t, pid) {
   return {
     code: t.code, me: pid, host: s.host, status: s.status, settings: s.settings, round: s.round, v: s.v,
     players, gone, order: s.order, turn: s.turn, dir: s.dir, pending: s.pending || 0, drew: !!s.drew,
-    color: s.color, top: s.discard[s.discard.length - 1] || null, deckCount: s.deck.length,
+    color: s.color, top: s.discard[s.discard.length - 1] || null, pile: s.discard.length, deckCount: s.deck.length,
     counts, hand: (s.hands && s.hands[pid]) || [], unsafe: s.unsafe || null, turnAt: s.turnAt || 0,
     winner: s.winner || null, wins: s.wins || {}, log: (s.log || []).slice(-6), now: Date.now(),
   };

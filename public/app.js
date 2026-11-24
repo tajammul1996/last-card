@@ -91,7 +91,7 @@ function cardHTML(c, o) {
   o = o || {};
   const col = cc(c), v = cv(c), wild = col === 'w', lab = label(c), tag = o.tag || 'div', ul = v === '6' || v === '9' ? ' ul' : '';
   const mid = wild ? (v === 'F' ? '+4' : '') : lab;
-  return `<${tag} class="card ${o.cls || ''}" style="--w:${o.w || 64}px;--c:${CVAR[col]}" ${o.attrs || ''} aria-label="${esc(o.aria || cardName(c))}"><span class="face"><span class="oval ${wild ? 'oval-wild' : ''}"></span><span class="mid${wild ? ' mid-wild' : ''}${ul}">${esc(mid)}</span><span class="corner tl${ul}">${esc(lab)}</span><span class="corner br${ul}">${esc(lab)}</span></span></${tag}>`;
+  return `<${tag} class="card ${o.cls || ''}" style="--w:${o.w || 64}px;--c:${CVAR[col]}" ${o.attrs || ''} aria-label="${esc(o.aria || cardName(c))}"><span class="face"><span class="oval ${wild ? 'oval-wild' : ''}"></span><span class="mid${wild ? ' mid-wild' : ''}${ul}">${esc(mid)}</span>${wild && v !== 'F' ? '<span class="corner tl"><i class="wdot"></i></span><span class="corner br"><i class="wdot"></i></span>' : `<span class="corner tl${ul}">${esc(lab)}</span><span class="corner br${ul}">${esc(lab)}</span>`}</span></${tag}>`;
 }
 function backHTML(w, cls) { return `<div class="card back ${cls || ''}" style="--w:${w}px"><span class="face"><span class="oval"></span><span class="wordmark">Last<br>Card</span></span></div>`; }
 
@@ -478,7 +478,7 @@ $('#quick').addEventListener('click', (e) => { const b = e.target.closest('[data
 function onState(s) {
   const prev = G; G = s; G.clockSkew = Date.now() - s.now;
   const lg = (G.log || []).slice(-1)[0];
-  if (view === 'game' && seenV >= 0 && lg && lg.v > seenV) toast(fmt(lg.msg), lg.kind);
+  if (view === 'game' && seenV >= 0 && lg && lg.v > seenV && (isWide() || ['call', 'catch', 'win'].includes(lg.kind))) toast(fmt(lg.msg), lg.kind);
   seenV = G.v || 0;
   const mine = G.status === 'playing' && G.order[G.turn] === G.me;
   const wasMine = prev && prev.status === 'playing' && prev.order[prev.turn] === prev.me && prev.round === G.round;
@@ -486,6 +486,9 @@ function onState(s) {
   if (G.status === 'playing') recorded = null;
   flipRing = !!(prev && prev.status === 'playing' && G.status === 'playing' && prev.round === G.round && prev.dir !== G.dir);
   if (flipRing) revMark = { round: G.round, turnAt: G.turnAt };
+  const sameRound = !!(prev && prev.status === 'playing' && G.status === 'playing' && prev.round === G.round);
+  qAdvance = sameRound && !flipRing && prev.turn !== G.turn;
+  flyFrom = sameRound && G.pile > prev.pile && prev.order[prev.turn] !== G.me ? prev.order[prev.turn] : null;
   if (prev && prev.status === 'playing' && G.status === 'over') { if (G.winner === G.me) { Snd.play('win'); confetti(90); } else { Snd.play('roundover'); confetti(40); } }
   render();
 }
@@ -564,6 +567,7 @@ function renderTable() {
   const R = { discard: [top], color: G.color, pending: G.pending };
   const playable = myTurn ? hand.filter((c, i) => (!G.drew || i === hand.length - 1) && canPlay(c, R)).length : 0;
   const wide = isWide(), small = window.innerHeight < 760;
+  if (!wide) { renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }); return; }
   const cw = wide ? 104 : small ? 62 : 72, dw = wide ? 92 : small ? 54 : 62;
   const ring = ringHTML(cw, dw, myTurn);
   lastTopV = G.v; flipRing = false;
@@ -584,6 +588,98 @@ function renderTable() {
   const nu = $('#nudgeBtn'); if (nu) nu.onclick = async () => { const r = await send('nudge'); if (r.ok) toast(`Nudged ${nameOf(G.host)}`); };
   wireClaim();
 }
+/* ---------- phone table: an "Up next" queue on top, the piles in the middle, your hand below ---------- */
+const ORD = (k) => (k === 1 ? 'next' : k === 2 ? '2nd' : k === 3 ? '3rd' : k + 'th');
+function upNextOrder() {
+  const n = G.order.length, step = G.dir === -1 ? -1 : 1, ups = [];
+  for (let i = 1; i < n; i++) ups.push(G.order[mod(G.turn + i * step, n)]);
+  return ups;
+}
+function lastMoveText() {
+  const lg = (G.log || []).slice(-1)[0];
+  if (!lg) return '';
+  return fmt(lg.msg).replace(/ · play now goes (anti)?clockwise/, ' · order reversed');
+}
+function queueHTML(myTurn) {
+  const n = G.order.length, playing = G.status === 'playing', curU = G.order[G.turn];
+  const ups = upNextOrder();
+  const slots = Math.max(3, Math.floor((Math.min(window.innerWidth, 520) - 140) / 50));
+  const shown = queueAll || ups.length <= slots ? ups : ups.slice(0, slots - 1);
+  const more = ups.length - shown.length;
+  const revTag = playing && n > 2 && revMark && revMark.round === G.round && revMark.turnAt === G.turnAt;
+  const badge = (u) => `<span class="qct ${count(u) === 1 ? 'one' : ''}" aria-label="${count(u)} cards">${count(u)}</span>`;
+  const sub = (u) => (!isOnline(u) ? 'Offline' : count(u) === 1 && playing ? 'Last card' : '');
+  const items = shown.map((u) => `<li class="${u === G.me ? 'me' : ''} ${!isOnline(u) ? 'off' : ''}" aria-label="${u === G.me ? 'You' : esc(nameOf(u))}, ${count(u)} cards"><span class="qavw">${av(u, '', false)}${badge(u)}</span><span class="qn">${u === G.me ? 'You' : esc(nameOf(u))}</span><span class="qs ${count(u) === 1 ? 'warn' : ''}">${esc(sub(u))}</span></li>`).join('');
+  const chip = more > 0 ? `<li class="chipli"><button class="qmore" id="qMore" aria-label="Show all ${n} players">+${more}</button></li>`
+    : queueAll && ups.length > slots ? `<li class="chipli"><button class="qmore" id="qMore" aria-label="Show fewer">Less</button></li>` : '';
+  const anim = flipRing ? 'flip' : qAdvance ? 'adv' : '';
+  return `<section class="qstrip" aria-label="Turn order">
+    <div class="qlabels"><span class="l1">Now</span><span class="l2">${n === 2 ? 'Then' : 'Up next'}</span>${revTag ? '<span class="qrev">⇄ Order reversed</span>' : ''}</div>
+    <div class="qrow ${anim}">
+      <div class="qnow ${!isOnline(curU) ? 'off' : ''}" id="qNow"><span class="qavw">${av(curU, '', false)}${badge(curU)}</span><span class="qn">${curU === G.me ? 'You' : esc(nameOf(curU))}</span><span class="qs">${playing ? (myTurn ? 'Your turn' : isOnline(curU) ? `<span id="turnClock">${clockText(turnLeft())}</span> left` : 'Offline') : ''}</span></div>
+      <span class="qsep" aria-hidden="true"><svg width="12" height="16" viewBox="0 0 12 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 2l6 6-6 6"/></svg></span>
+      <ol class="qlist">${items}${chip}</ol>
+    </div>
+  </section>`;
+}
+function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) {
+  const fromEl = flyFrom ? $('#qNow .av') : null, fromRect = fromEl ? fromEl.getBoundingClientRect() : null;
+  const top = G.top, cur = CVAR[G.color] || 'transparent', curU = G.order[G.turn], playing = G.status === 'playing';
+  const cw = small ? 84 : 96, dw = small ? 74 : 84;
+  let pill = '', note = '';
+  if (G.status === 'over') pill = `<span class="pill">${G.winner === G.me ? 'You win!' : esc(nameOf(G.winner)) + ' wins!'}</span>`;
+  else if (myTurn) pill = `<span class="pill mine">Your turn <span class="clock" id="turnClock">${clockText(turnLeft())}</span></span>`;
+  else if (seated) {
+    const place = upNextOrder().indexOf(G.me) + 1;
+    pill = `<span class="pill ${place === 1 ? 'soon' : ''}">${place === 1 ? 'You’re next' : 'You’re ' + ORD(place) + ' in line'}</span>`;
+  }
+  if (!myTurn && playing) note = G.pending > 0 ? `${nameOf(curU)} must stack or draw ${G.pending}` : !isOnline(curU) ? `${nameOf(curU)} seems to be offline` : '';
+  const line = myTurn ? hint.replace('tap the pile to draw', 'tap Draw').replace(/\.$/, '') : note;
+  const fresh = lastTopV !== G.v;
+  $('#gMain').innerHTML = `
+    ${queueHTML(myTurn)}
+    <div class="center qcenter">
+      <div class="piles">
+        <div class="pilecol">
+          <button class="drawpile ${myTurn && !G.drew ? 'can' : ''}" id="drawPile" aria-label="Draw a card, ${G.deckCount} left" style="width:${dw + 6}px;height:${Math.round(dw * 1.52) + 6}px">${backHTML(dw, 'shadow')}${backHTML(dw)}</button>
+          <span class="pilelbl ${myTurn && !G.drew ? 'go' : ''}">Draw · ${G.deckCount}</span>
+        </div>
+        <div class="pilecol discard-wrap">
+          ${G.pending > 0 ? `<span class="stackb">+${G.pending}</span>` : ''}
+          <div class="discard" style="--cur:${cur}">${top ? cardHTML(top, { w: cw, cls: fresh && !fromRect ? 'pop' : '' }) : ''}</div>
+          <span class="curcol pilelbl" style="--cur:${cur}"><i></i>${COLORS[G.color] ? COLORS[G.color] + ' to match' : ''}</span>
+        </div>
+      </div>
+      <p class="lastmove ${fresh ? 'new' : ''}" aria-live="polite">${esc(lastMoveText())}</p>
+      ${line ? `<p class="qhint ${myTurn ? 'mine' : ''}">${esc(line)}</p>` : ''}
+    </div>
+    ${seated ? `<div class="handwrap q" id="handwrap"><div class="hbar" role="status">${pill}<div class="actions" id="actions"></div></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
+      : '<div class="spect">You’re watching this round. You’ll be dealt in when the next round starts.</div>'}
+    ${G.status === 'over' ? overHTML() : ''}`;
+  lastTopV = G.v; flipRing = false; qAdvance = false; flyFrom = null;
+  renderActions();
+  if (seated) renderHand(hand, myTurn, prevScroll, R);
+  $('#drawPile').onclick = doDraw;
+  const qm = $('#qMore'); if (qm) qm.onclick = () => { queueAll = !queueAll; render(); };
+  const nb = $('#nextBtn'); if (nb) nb.onclick = () => send('start');
+  const ob = $('#overBoard'); if (ob) ob.onclick = () => showBoard('game');
+  const nu = $('#nudgeBtn'); if (nu) nu.onclick = async () => { const r = await send('nudge'); if (r.ok) toast(`Nudged ${nameOf(G.host)}`); };
+  wireClaim();
+  if (fromRect) flyCard(fromRect);
+}
+// the card someone just played flies from their avatar in the queue onto the pile
+function flyCard(from) {
+  const to = $('.qcenter .discard .card');
+  if (!to || !to.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const r = to.getBoundingClientRect();
+  const ghost = to.cloneNode(true);
+  Object.assign(ghost.style, { position: 'fixed', left: r.left + 'px', top: r.top + 'px', margin: '0', zIndex: '40', pointerEvents: 'none' });
+  document.body.appendChild(ghost); to.style.visibility = 'hidden';
+  const dx = from.left + from.width / 2 - (r.left + r.width / 2), dy = from.top + from.height / 2 - (r.top + r.height / 2);
+  const a = ghost.animate([{ transform: `translate(${dx}px,${dy}px) scale(.35) rotate(-20deg)`, opacity: 0.6 }, { transform: 'none', opacity: 1 }], { duration: 420, easing: 'cubic-bezier(.2,.7,.3,1)' });
+  const done = () => { ghost.remove(); to.style.visibility = ''; };
+  a.onfinish = done; a.oncancel = done;
+}
 function doDraw() {
   if (!G || G.status !== 'playing') return;
   if (G.order[G.turn] !== G.me) { toast('Wait for your turn'); return; }
@@ -596,7 +692,7 @@ function updateHandEdges() {
   wrap.classList.toggle('more-l', l); wrap.classList.toggle('more-r', r);
   $('#scrL').hidden = !l; $('#scrR').hidden = !r;
 }
-let handOrder = [], flipRing = false, revMark = null;
+let handOrder = [], flipRing = false, revMark = null, qAdvance = false, flyFrom = null, queueAll = false;
 /* Seats sit on an ellipse in play order, you at the bottom. Seats never move when play reverses;
    only the flow of the ring and the arrow towards the next player change direction. */
 function ringHTML(cw, dw, myTurn) {
@@ -643,7 +739,7 @@ function renderHand(hand, myTurn, prevScroll, R) {
   const idx = hand.map((c, i) => i).sort((a, b) => CORD.indexOf(cc(hand[a])) - CORD.indexOf(cc(hand[b])) || VORD.indexOf(cv(hand[a])) - VORD.indexOf(cv(hand[b])));
   if (myTurn && G.drew) { const li = hand.length - 1; idx.splice(idx.indexOf(li), 1); idx.unshift(li); }
   handOrder = idx;
-  const wide = isWide(), w = wide ? 88 : window.innerWidth < 370 ? 70 : 80;
+  const wide = isWide(), w = wide ? 88 : window.innerWidth < 370 || window.innerHeight < 760 ? 70 : 80;
   el.innerHTML = idx.map((i, k) => {
     const c = hand[i]; let cls = '';
     const ok = myTurn && G.status === 'playing' && (!G.drew || i === hand.length - 1) && canPlay(c, R);
