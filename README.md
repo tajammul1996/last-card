@@ -40,8 +40,11 @@ Players are remembered by a random token in the browser, so refreshing or briefl
 
 - Invite links open a join screen for that table, with the host and players listed. Opening a different table's link switches to it cleanly; a seat in a running game is kept so you can go back.
 - Sign in with a name and 4-digit PIN on any phone. Five wrong PINs lock that name for 10 minutes.
-- Leaderboard of wins across all games, with a tab per game.
+- Leaderboard of wins across all games, with a tab per game, This week / All time, a top-3 podium, last played and your own row always visible. Winners see their new rank when a round ends; non-hosts can nudge the host to deal.
 - Only the host (whoever created the table) deals and changes house rules. The host can hand that role to someone else, and if the host goes offline anyone can take over.
+- Turn circle: players sit around the piles in play order; the ring flows the way play goes, the current player glows, the next one is marked, and Reverse flips the flow.
+- Phone and desktop layouts: on a computer, chat docks beside the table and you can play with the keyboard (1–9 play a card, D draw, L Last card, C chat).
+- Everyone at the table is told when someone joins or leaves, also mid-game.
 - Table chat with quick replies and emoji reactions.
 - A soft chime on your turn, a fanfare and confetti when a round is won, a pop for new messages. Players can turn sounds off under **Players**.
 - Big hands scroll sideways with at least 60% of every card visible.

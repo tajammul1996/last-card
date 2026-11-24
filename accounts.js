@@ -15,9 +15,13 @@ const K = {
   acct: (k) => 'lc:acct:' + k,
   sess: (t) => 'lc:sess:' + t,
   fail: (k) => 'lc:fail:' + k,
-  wins: (g) => `lc:lb:${g}:wins`,
-  played: (g) => `lc:lb:${g}:played`,
+  wins: (g, w) => `lc:lb:${g}:wins` + (w ? ':' + w : ''),
+  played: (g, w) => `lc:lb:${g}:played` + (w ? ':' + w : ''),
+  last: 'lc:lb:last',
 };
+// Weeks start Monday 00:00 UTC (05:30 in India). 1970-01-01 was a Thursday, hence the +3.
+const weekId = (t = Date.now()) => 'w' + Math.floor((Math.floor(t / 864e5) + 3) / 7);
+const WEEK_TTL = 6 * 7 * 24 * 3600;
 
 const keyOf = (name) => String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
 const cleanName = (name) => String(name || '').trim().replace(/\s+/g, ' ');
@@ -64,6 +68,15 @@ async function incrFail(k) {
 async function zincr(k, member, by) {
   if (r) return r.zIncrBy(k, by, member);
   const z = mem.z.get(k) || new Map(); mem.z.set(k, z); z.set(member, (z.get(member) || 0) + by);
+}
+async function expire(k, sec) { if (r) await r.expire(k, sec); }
+async function hset(k, field, v) {
+  if (r) return r.hSet(k, field, String(v));
+  const h = (await get(k)) || {}; h[field] = v; await set(k, h);
+}
+async function hgetall(k) {
+  if (r) { const h = await r.hGetAll(k); const o = {}; for (const [a, b] of Object.entries(h)) o[a] = Number(b); return o; }
+  return (await get(k)) || {};
 }
 async function zall(k, limit) {
   if (r) {
@@ -158,24 +171,36 @@ async function logout(token) { if (typeof token === 'string' && /^[a-f0-9]{48}$/
 async function recordResult(game, winnerKey, playerKeys) {
   const ps = [...new Set(playerKeys.filter(Boolean))];
   if (ps.length < 2) return false;
+  const w = weekId();
   for (const g of [game, ALL]) {
-    if (winnerKey) await zincr(K.wins(g), winnerKey, 1);
-    for (const p of ps) await zincr(K.played(g), p, 1);
+    for (const wk of [null, w]) {
+      if (winnerKey) await zincr(K.wins(g, wk), winnerKey, 1);
+      for (const p of ps) await zincr(K.played(g, wk), p, 1);
+      if (wk) { await expire(K.wins(g, wk), WEEK_TTL); await expire(K.played(g, wk), WEEK_TTL); }
+    }
   }
+  const now = Date.now();
+  for (const p of ps) await hset(K.last, p, now);
   return true;
 }
 
-async function leaderboard(game, limit = 50) {
+/** Ranked rows for one game ('all' = every game) and period ('week' | 'all'), plus your own row wherever you are. */
+async function leaderboard(game, limit = 50, period = 'all', mineKey = null) {
   const g = game || ALL;
-  const [wins, played] = await Promise.all([zall(K.wins(g), 500), zall(K.played(g), 500)]);
+  const wk = period === 'week' ? weekId() : null;
+  const [wins, played, last] = await Promise.all([zall(K.wins(g, wk), 500), zall(K.played(g, wk), 500), hgetall(K.last)]);
   const keys = [...new Set([...played.keys(), ...wins.keys()])];
   const rows = await Promise.all(keys.map(async (k) => {
     const a = await get(K.acct(k));
     const w = wins.get(k) || 0, p = Math.max(played.get(k) || 0, w);
-    return { key: k, name: a ? a.name : k, wins: w, played: p };
+    return { key: k, name: a ? a.name : k, wins: w, played: p, last: last[k] || null };
   }));
   rows.sort((a, b) => b.wins - a.wins || (b.wins / (b.played || 1)) - (a.wins / (a.played || 1)) || b.played - a.played || a.name.localeCompare(b.name));
-  return rows.slice(0, limit);
+  rows.forEach((x, i) => { x.rank = i + 1; });
+  const mine = mineKey ? rows.find((x) => x.key === mineKey) || null : null;
+  const out = rows.slice(0, limit);
+  out.mine = mine;
+  return out;
 }
 
 const persistent = () => !!r;

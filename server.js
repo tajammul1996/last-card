@@ -203,6 +203,7 @@ function removePlayer(t, id) {
     t.s.v++;
     E.applyRemove(t.s, id);
   }
+  io.to(t.code).emit('presence', { code: t.code, type: 'left', id, name: p.name, status: t.s.status });
   t.players.delete(id);
   forget(t, p);
   for (const sid of p.sockets) {
@@ -246,8 +247,13 @@ function attach(socket, t, p) {
 function recordRound(t, game) {
   const s = t.s;
   const acct = (id) => { const p = t.players.get(id); return p && p.account; };
-  Accounts.recordResult(game, acct(s.winner), s.order.map(acct))
-    .then((ok) => { if (ok) io.to(t.code).emit('recorded', { code: t.code, round: s.round }); })
+  const winner = acct(s.winner);
+  Accounts.recordResult(game, winner, s.order.map(acct))
+    .then(async (ok) => {
+      if (!ok) return;
+      const rows = await Accounts.leaderboard('all', 1, 'all', winner);
+      io.to(t.code).emit('recorded', { code: t.code, round: s.round, winner: s.winner, rank: rows.mine ? rows.mine.rank : null });
+    })
     .catch((e) => console.error('leaderboard save failed', e.message));
 }
 
@@ -301,7 +307,14 @@ io.on('connection', (socket) => {
     const keys = [socket.data.account ? 'a:' + socket.data.account.key : null, socket.data.token ? 't:' + socket.data.token : null].filter(Boolean);
     for (const k of keys) {
       const code = lastTable.get(k); const t = code && tables.get(code);
-      if (t && findSeat(t)) return { code, status: t.s.status, round: t.s.round || 0 };
+      const seat = t && findSeat(t);
+      if (seat) {
+        const s = t.s;
+        const others = [...t.players.values()].filter((x) => x.id !== seat.id).sort((a, b) => a.joined - b.joined).map((x) => x.name);
+        const host = t.players.get(s.host);
+        return { code, status: s.status, round: s.round || 0, yourTurn: s.status === 'playing' && s.order[s.turn] === seat.id,
+          players: others, host: host ? host.name : null, isHost: s.host === seat.id };
+      }
     }
     return null;
   };
@@ -393,16 +406,30 @@ io.on('connection', (socket) => {
     const p = { id, token: socket.data.token, account: socket.data.account.key, name: socket.data.account.name, joined: Date.now(), sockets: new Set() };
     t.players.set(id, p);
     attach(socket, t, p);
+    io.to(code).emit('presence', { code, type: 'joined', id, name: p.name, status: t.s.status });
     ack({ ok: true, code });
   });
 
   on('leave', (_, ack) => { const c = ctx(); if (c) removePlayer(c.t, c.me); ack({ ok: true }); });
 
-  on('leaderboard', async ({ game }, ack) => {
+  on('leaderboard', async ({ game, period, limit }, ack) => {
     const g = Accounts.GAMES[game] ? game : 'all';
-    const rows = await Accounts.leaderboard(g, 50);
-    const mine = socket.data.account && socket.data.account.key;
-    ack({ ok: true, game: g, games: Accounts.GAMES, persistent: Accounts.persistent(), rows: rows.map((x) => ({ name: x.name, wins: x.wins, played: x.played, me: x.key === mine })) });
+    const per = period === 'week' ? 'week' : 'all';
+    const mineKey = socket.data.account && socket.data.account.key;
+    const rows = await Accounts.leaderboard(g, Math.min(Math.max(Number(limit) || 50, 1), 50), per, mineKey);
+    const pub = (x) => x && ({ rank: x.rank, name: x.name, wins: x.wins, played: x.played, last: x.last, me: x.key === mineKey });
+    ack({ ok: true, game: g, period: per, games: Accounts.GAMES, persistent: Accounts.persistent(), rows: rows.map(pub), mine: pub(rows.mine) });
+  });
+
+  // a gentle "your turn to deal" poke at the host, at most every 15 seconds
+  on('nudge', (_, ack) => {
+    const c = ctx(); if (!c || c.isHost) return ack({ ok: false });
+    const now = Date.now();
+    if (now - (socket.data.lastNudge || 0) < 15_000) return ack({ ok: false, error: 'You just nudged. Give them a moment.' });
+    socket.data.lastNudge = now;
+    const host = c.t.players.get(c.s.host);
+    if (host) for (const sid of host.sockets) io.to(sid).emit('nudged', { code: c.t.code, by: c.me });
+    ack({ ok: true });
   });
 
   // ----- host-only controls -----
