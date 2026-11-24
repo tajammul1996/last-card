@@ -84,7 +84,7 @@ function toast(msg, kind, html) {
   const el = document.createElement('div'); el.className = 'toast ' + (kind || '');
   if (html) el.innerHTML = html; else el.textContent = msg;
   const box = $('#toasts'); box.appendChild(el);
-  while (box.children.length > 3) box.firstChild.remove();
+  while (box.children.length > (view === 'game' ? 2 : 3)) box.firstChild.remove();
   setTimeout(() => el.remove(), kind === 'win' ? 4200 : kind === 'chat' ? 4000 : 2800);
 }
 function cardHTML(c, o) {
@@ -244,7 +244,9 @@ socket.on('connect_error', () => {
   $('#homeNote').textContent = 'Waking up the game server. This can take up to a minute the first time.';
   const w = $('#invWait'); if (w) w.textContent = 'Waking up the game server. This can take up to a minute the first time.';
 });
-socket.on('state', (s) => { if (s && s.code === curCode) onState(s); });
+// the server sends a table's state just before it confirms a join, so keep the latest per table
+const latest = {}, latestChat = {};
+socket.on('state', (s) => { if (!s) return; latest[s.code] = s; if (s.code === curCode) onState(s); });
 socket.on('left', (m) => { if (m && m.code === curCode) { toast('You were removed from the table'); curCode = null; G = null; setHash(''); showHome(); } });
 socket.on('react', (m) => { if (m && m.code === curCode && view === 'game' && ['😂', '😱', '😤', '👏'].includes(m.e)) floatEmoji(m.e, m.by); });
 socket.on('recorded', (m) => { if (m && m.code === curCode) { recorded = m; if (G && G.status === 'over') render(); } });
@@ -257,7 +259,7 @@ socket.on('presence', (m) => {
   renderChat();
   if (view === 'game') { toast(text, m.type === 'joined' ? 'win' : ''); if (m.type === 'joined') Snd.play('chat'); }
 });
-socket.on('chatHistory', (m) => { if (m && m.code === curCode) { chatMsgs = Array.isArray(m.list) ? m.list.slice(-60) : []; renderChat(); } });
+socket.on('chatHistory', (m) => { if (!m) return; latestChat[m.code] = m.list; if (m.code === curCode) { chatMsgs = Array.isArray(m.list) ? m.list.slice(-60) : []; renderChat(); } });
 socket.on('chat', (m) => {
   if (!m || m.code !== curCode || !m.text) return;
   chatMsgs.push(m); if (chatMsgs.length > 60) chatMsgs.shift();
@@ -405,7 +407,10 @@ function enterGame(code) {
     $('#gMain').innerHTML = '<div class="center"><p class="note">Loading the table…</p></div>';
   }
   show('game'); setHash(code); $('#gCode').textContent = code;
-  if (G) render();
+  if (!G && latest[code]) {
+    if (latestChat[code]) { chatMsgs = latestChat[code].slice(-60); renderChat(); }
+    onState(latest[code]);
+  } else if (G) render();
 }
 async function goHomeKeepSeat() {
   closeSheets(); curCode = null; G = null;
@@ -480,6 +485,7 @@ function onState(s) {
   if (prev && mine && !wasMine) { buzz(); Snd.play('turn'); scrollToPlayable = true; }
   if (G.status === 'playing') recorded = null;
   flipRing = !!(prev && prev.status === 'playing' && G.status === 'playing' && prev.round === G.round && prev.dir !== G.dir);
+  if (flipRing) revMark = { round: G.round, turnAt: G.turnAt };
   if (prev && prev.status === 'playing' && G.status === 'over') { if (G.winner === G.me) { Snd.play('win'); confetti(90); } else { Snd.play('roundover'); confetti(40); } }
   render();
 }
@@ -549,7 +555,11 @@ function renderTable() {
     hint = G.pending > 0 ? `Stack a ${cv(top) === 'D' ? '+2 or +4' : '+4'}, or tap the pile to draw ${G.pending}.` : G.drew ? 'Play the card you drew, or pass.' : (isWide() ? 'Click a glowing card or press its number. Press D to draw.' : 'Play a glowing card, or tap the pile to draw.');
   } else {
     pill = `<span class="pill">${esc(nameOf(curU))}’s turn <span class="clock" id="turnClock">${clockText(turnLeft())}</span></span>`;
-    hint = G.pending > 0 ? `${nameOf(curU)} must stack or draw ${G.pending}.` : isOnline(curU) ? '' : `${nameOf(curU)} seems to be offline.`;
+    const n = G.order.length, step = G.dir || 1;
+    const who = (u) => (u === meId ? 'you' : nameOf(u));
+    const n1 = G.order[mod(G.turn + step, n)], n2 = G.order[mod(G.turn + 2 * step, n)];
+    const upNext = n < 3 || n2 === curU ? `${who(n1)[0].toUpperCase() + who(n1).slice(1)} ${n1 === meId ? 'are' : 'is'} next` : `${who(n1)[0].toUpperCase() + who(n1).slice(1)} ${n1 === meId ? 'are' : 'is'} next, then ${who(n2)}`;
+    hint = G.pending > 0 ? `${nameOf(curU)} must stack or draw ${G.pending}.` : isOnline(curU) ? upNext : `${nameOf(curU)} seems to be offline.`;
   }
   const R = { discard: [top], color: G.color, pending: G.pending };
   const playable = myTurn ? hand.filter((c, i) => (!G.drew || i === hand.length - 1) && canPlay(c, R)).length : 0;
@@ -586,7 +596,7 @@ function updateHandEdges() {
   wrap.classList.toggle('more-l', l); wrap.classList.toggle('more-r', r);
   $('#scrL').hidden = !l; $('#scrR').hidden = !r;
 }
-let handOrder = [], flipRing = false;
+let handOrder = [], flipRing = false, revMark = null;
 /* Seats sit on an ellipse in play order, you at the bottom. Seats never move when play reverses;
    only the flow of the ring and the arrow towards the next player change direction. */
 function ringHTML(cw, dw, myTurn) {
@@ -608,13 +618,15 @@ function ringHTML(cw, dw, myTurn) {
     const a = Math.PI / 2 + ((kc + step / 2) * 2 * Math.PI) / n;
     const x = 50 + RX * Math.cos(a), y = 50 + RY * Math.sin(a);
     const tangent = (Math.atan2(RY * Math.cos(a), -RX * Math.sin(a)) * 180) / Math.PI + (step === 1 ? 0 : 180);
-    chev = `<span class="chev" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;--r:${tangent.toFixed(1)}deg" aria-hidden="true">➤</span>`;
+    chev = `<span class="chev" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;--r:${tangent.toFixed(1)}deg" aria-hidden="true"></span>`;
   }
   const cur = CVAR[G.color] || 'transparent', top = G.top;
+  const revTag = playing && revMark && revMark.round === G.round && revMark.turnAt === G.turnAt;
   return `<div class="ringwrap ${flipRing ? 'flip' : ''}" role="group" aria-label="Players in turn order, play goes ${G.dir === 1 ? 'clockwise' : 'anticlockwise'}">
     <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><ellipse class="ring-path ${playing ? (G.dir === 1 ? 'cw' : 'ccw') : 'idle'}" cx="50" cy="50" rx="${RX}" ry="${RY}" pathLength="100"/></svg>
     ${chev}${seats}
     <div class="ring-center">
+      ${revTag ? '<span class="revtag">⇄ Direction reversed</span>' : ''}
       <div class="piles">
         <button class="drawpile ${myTurn && !G.drew ? 'can' : ''}" id="drawPile" aria-label="Draw a card${isWide() ? ' (D)' : ''}, ${G.deckCount} left" style="width:${dw + 6}px;height:${Math.round(dw * 1.52) + 6}px">${backHTML(dw, 'shadow')}${backHTML(dw)}</button>
         <div class="discard-wrap">

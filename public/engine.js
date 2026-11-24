@@ -90,7 +90,7 @@ function applyPlay(s,me,idx,chosen,called){
   if(v==='S'){msg+=' · '+T(nextUid(s))+' is skipped';advance(s,2);}
   else if(v==='R'){
     if(n===2){msg+=' · goes again';advance(s,2);}
-    else{s.dir*=-1;advance(s,1);}
+    else{s.dir*=-1;msg+=' · play now goes '+(s.dir===1?'clockwise':'anticlockwise');advance(s,1);}
   }
   else if(v==='D'||v==='F'){
     const k=v==='D'?2:4;

@@ -263,7 +263,8 @@ h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
 .seat.off{opacity:.5}
 .seat.me .nm{color:var(--gold)}
 @keyframes turnpulse{50%{box-shadow:0 0 0 3px var(--felt),0 0 0 10px rgba(255,201,74,.35)}}
-.chev{position:absolute;transform:translate(-50%,-50%) rotate(var(--r));color:var(--gold);font-size:22px;font-weight:800;line-height:1;z-index:1;pointer-events:none;transition:left .5s ease,top .5s ease}
+.chev{position:absolute;width:0;height:0;border-top:7px solid transparent;border-bottom:7px solid transparent;border-left:20px solid var(--gold);transform:translate(-50%,-50%) rotate(var(--r));filter:drop-shadow(0 1px 2px rgba(0,0,0,.5));z-index:1;pointer-events:none}
+.revtag{padding:3px 10px;border-radius:99px;background:var(--gold);color:var(--gold-ink);font-size:12px;font-weight:800;letter-spacing:.02em;animation:pop .32s ease-out}
 .ring-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:1}
 .ring-center .piles{gap:18px}
 .dirlbl{font-size:12px;font-weight:700;color:var(--muted);display:flex;align-items:center;gap:6px}
@@ -329,8 +330,9 @@ h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
 
 /* ---------- toasts etc ---------- */
 #toasts{position:fixed;left:0;right:0;top:64px;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:60;pointer-events:none;padding:0 16px}
-body.in-game #toasts{top:auto;bottom:calc(230px + env(safe-area-inset-bottom))}
-@media (min-width:1024px){body.in-game #toasts{bottom:250px;right:360px}}
+body.in-game #toasts{top:58px}
+body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
+@media (min-width:1024px){body.in-game #toasts{top:76px;right:360px}}
 .toast{background:var(--ink);color:#14212c;padding:9px 14px;border-radius:12px;font-weight:600;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.35);max-width:440px;text-align:center;animation:drop .25s ease-out}
 .toast.call,.toast.catch{background:var(--red);color:#fff}
 .toast.win{background:var(--gold);color:var(--gold-ink)}
