@@ -1,1 +1,17 @@
-{"name":"Last Card","short_name":"Last Card","start_url":"/","display":"standalone","background_color":"#0f2a3f","theme_color":"#0f2a3f","icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml"}]}
+{
+  "name": "Last Card",
+  "short_name": "Last Card",
+  "description": "A match-the-colour card game you play with friends on your phones.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f2a3f",
+  "theme_color": "#0f2a3f",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

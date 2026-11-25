@@ -23,7 +23,8 @@ let session = load('lc-session'), me = null, build = null, last = null, ready = 
 let view = 'home', curCode = null, G = null, boardFrom = 'home', boardGame = 'all', boardPeriod = 'week';
 let armedCall = false, seenV = -1, lastTopV = -1, pendingWild = null, scrollToPlayable = false;
 let chatMsgs = [], unread = 0, afterSignIn = null, recorded = null;
-const socket = io({ transports: ['websocket', 'polling'] });
+// offline the Socket.IO script may be missing: a stand-in keeps the app (and practice) working
+const socket = typeof io === 'function' ? io({ transports: ['websocket', 'polling'] }) : { connected: false, on() {}, emit() {}, timeout() { return this; } };
 
 /* ---------- sound (made in the browser, no files) ---------- */
 const Snd = {
@@ -69,13 +70,14 @@ function hue(s) { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCo
 function avatarFor(key, name, opts) {
   opts = opts || {};
   const dot = opts.online === undefined ? '' : `<i class="dot ${opts.online ? 'on' : ''}"></i>`;
-  return `<span class="av ${opts.size || ''}" style="background:hsl(${hue(key || name)} 45% 38%)" aria-hidden="true">${esc(String(name || '?').trim().charAt(0).toUpperCase() || '?')}${dot}</span>`;
+  const bot = opts.bot ? '<i class="botb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4"/></svg></i>' : '';
+  return `<span class="av ${opts.size || ''}" style="background:hsl(${hue(key || name)} 45% 38%)" aria-hidden="true">${esc(String(name || '?').trim().charAt(0).toUpperCase() || '?')}${dot}${bot}</span>`;
 }
 function playerOf(u) { return G && G.players.find((p) => p.id === u); }
 function nameOf(u) { const p = playerOf(u); return p ? p.name : (G && G.gone && G.gone[u]) || 'Player'; }
 function isOnline(u) { const p = playerOf(u); return !!(p && p.online); }
 function isHost() { return !!G && G.host === G.me; }
-function av(u, size, withDot) { return avatarFor(nameOf(u).toLowerCase(), nameOf(u), { size, online: withDot ? isOnline(u) : undefined }); }
+function av(u, size, withDot) { const p = playerOf(u); return avatarFor(nameOf(u).toLowerCase(), nameOf(u), { size, online: withDot && !(p && p.bot) ? isOnline(u) : undefined, bot: !!(p && p.bot) }); }
 function fmt(msg) {
   const meId = G && G.me, Y = '\u0001';
   let t = String(msg).replace(/\{\{([^}]+)\}\}/g, (_, u) => (u === meId ? Y : nameOf(u)));
@@ -113,6 +115,7 @@ function backHTML(w, cls) { return `<div class="card back ${cls || ''}" style="-
 
 /* ---------- server calls ---------- */
 function send(ev, data, quiet) {
+  if (practice && curCode === PRACTICE) return Promise.resolve(practiceAct(ev, data || {}));
   return new Promise((res) => {
     if (!socket.connected) { if (!quiet) toast('Not connected yet. Hang on a second.'); return res({ ok: false, error: 'Not connected yet. Hang on a second.' }); }
     socket.timeout(8000).emit(ev, data || {}, (err, r) => {
@@ -124,9 +127,10 @@ function send(ev, data, quiet) {
 }
 
 /* ---------- screens + routing ---------- */
-const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto'];
+const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall'];
 function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#' + id).hidden = true; $('#reactPop').hidden = true; }
 function show(v) {
+  if (v !== 'game' && practice) endPractice();
   view = v;
   document.body.classList.toggle('in-game', v === 'game');
   for (const id of ['home', 'invite', 'board', 'game']) $('#' + id).hidden = id !== v;
@@ -252,8 +256,10 @@ socket.on('connect', async () => {
   if (r.build) { if (!build) build = r.build; else if (r.build !== build) $('#updateBar').hidden = false; }
   if (r.ok) { me = r.account || null; if (!r.sessionValid) { session = ''; store('lc-session', ''); } last = r.last || null; }
   ready = true; $('#homeNote').textContent = '';
-  if (view === 'game' && curCode && !hashCode()) setHash(curCode);
-  route();
+  if (view === 'game' && curCode && !hashCode() && !practice) setHash(curCode);
+  setOffline(false);
+  syncPush();
+  if (!practice) route();
 });
 socket.on('disconnect', () => { setTimeout(() => { if (!socket.connected) $('#conn').hidden = false; }, 1500); });
 socket.on('connect_error', () => {
@@ -287,7 +293,7 @@ socket.on('nudged', (m) => { if (m && m.code === curCode) { Snd.play('nudge'); b
 socket.on('presence', (m) => {
   if (!m || m.code !== curCode || !G) return;
   if (m.id === G.me || (me && m.name === me.name)) return;
-  const text = m.type === 'joined' ? `${m.name} joined the table${m.status === 'lobby' ? '' : ' · dealt in next round'}` : `${m.name} left the table`;
+  const text = m.type === 'joined' ? (m.status === 'playing' ? `${m.name} is watching · dealt in next round` : `${m.name} joined the table${m.status === 'lobby' ? '' : ' · dealt in next round'}`) : `${m.name} left the table`;
   chatMsgs.push({ sys: true, text, at: Date.now() }); if (chatMsgs.length > 60) chatMsgs.shift();
   renderChat();
   if (view === 'game') { toast(text, m.type === 'joined' ? 'win' : ''); if (m.type === 'joined') Snd.play('chat'); }
@@ -334,8 +340,70 @@ function showHome() {
     $('#rejoinBtn').onclick = () => openTable(last.code);
   } else box.innerHTML = '';
   $('#createBtn').className = 'btn block ' + (last && me ? 'light' : 'gold');
-  loadHomeBoard();
+  // offline: only practice is possible
+  $('#offlineBox').hidden = !offline;
+  $('#lbh').closest('section').hidden = offline;
+  if (offline) { $('#homeAuth').hidden = true; $('#newGameBox').hidden = true; box.innerHTML = ''; }
+  $('#practiceRow').classList.toggle('hot', offline);
+  paintInstall();
+  if (!offline) loadHomeBoard();
 }
+$('#practiceRow').onclick = () => openPracticeSetup();
+
+/* ---------- offline ---------- */
+let offline = false;
+function setOffline(v) { if (offline === v) return; offline = v; if (view === 'home') showHome(); }
+window.addEventListener('offline', () => setOffline(true));
+window.addEventListener('online', () => { if (socket.connected) setOffline(false); });
+setTimeout(() => { if (!socket.connected && (!navigator.onLine || typeof io !== 'function')) { offline = true; if (view === 'home' || !ready) showHome(); } }, 2500);
+
+/* ---------- install as an app ---------- */
+let installEvt = null;
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; paintInstall(); });
+window.addEventListener('appinstalled', () => { installEvt = null; store('lc-install', 'done'); paintInstall(); });
+function paintInstall() {
+  const show = !standalone() && !load('lc-install') && (!!installEvt || isIOS());
+  $('#installBox').hidden = !show;
+}
+$('#installBtn').onclick = async () => {
+  if (installEvt) { installEvt.prompt(); const r = await installEvt.userChoice.catch(() => null); if (r && r.outcome === 'accepted') store('lc-install', 'done'); installEvt = null; paintInstall(); }
+  else if (isIOS()) { closeSheets(); $('#iosInstall').hidden = false; }
+};
+$('#installX').onclick = () => { store('lc-install', 'dismissed'); paintInstall(); };
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+
+/* ---------- your-turn alerts ---------- */
+function pushSupported() { return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && (!isIOS() || standalone()); }
+function b64ToBytes(b64) { const p = '='.repeat((4 - (b64.length % 4)) % 4); const raw = atob((b64 + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (c) => c.charCodeAt(0)); }
+async function enablePush() {
+  if (!pushSupported()) return false;
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return false;
+    const reg = await navigator.serviceWorker.ready;
+    const k = await send('vapid', {}, true);
+    if (!k.ok || !k.key) return false;
+    const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.key) }));
+    const r = await send('pushSub', { sub: sub.toJSON() }, true);
+    if (r.ok) store('lc-push', 'on');
+    return !!r.ok;
+  } catch (e) { return false; }
+}
+// keep the server's copy of this phone's alert address up to date (it changes, and accounts can switch)
+async function syncPush() {
+  if (!pushSupported() || Notification.permission !== 'granted' || load('lc-push') !== 'on' || !me) return;
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) send('pushSub', { sub: sub.toJSON() }, true); else enablePush(); } catch (e) {}
+}
+$('#alertBtn').onclick = async () => {
+  if (load('lc-push') === 'on' && Notification.permission === 'granted') {
+    store('lc-push', 'off');
+    try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); } catch (e) {}
+  } else if (!(await enablePush())) toast(Notification.permission === 'denied' ? 'Alerts are blocked in your browser settings for this site.' : 'Couldn’t turn on alerts.');
+  renderMenu();
+};
+$('#approveBtn').onclick = () => send('setting', { key: 'approve' });
 async function loadHomeBoard() {
   const r = await send('leaderboard', { game: 'all', period: 'all', limit: 5 }, true);
   if (!r.ok) return;
@@ -382,7 +450,10 @@ function showInvite(info) {
     $('#invOwn').onclick = () => showHome(); return;
   }
   const host = info.host || 'Someone';
-  const status = info.status === 'lobby' ? 'waiting in the lobby' : info.status === 'playing' ? `round ${info.round} in progress, you’ll join next round` : 'between rounds';
+  const live = info.status === 'playing';
+  const status = info.status === 'lobby' ? 'waiting in the lobby' : live ? `round ${info.round} is on` : 'between rounds';
+  const joinLabel = info.full ? 'This table is full' : info.approve ? (live ? `Ask ${host} to let you watch` : `Ask ${host} to let you in`) : live ? 'Watch now, join next round' : `Join ${host}’s table`;
+  const joinNote = info.full ? '' : info.approve ? `${host} lets people in. They’ll see your request.` : live ? 'You’ll see the table, not anyone’s cards. You’re dealt in when this round ends.' : '';
   const seatsShown = info.players.slice(0, info.full ? 8 : 7);
   body.innerHTML = `
     <a class="logo" href="/" style="flex-grow:0">Last <span>Card</span></a>
@@ -393,12 +464,13 @@ function showInvite(info) {
     </div>
     <section class="inv-seats" aria-labelledby="invAt">
       <h2 id="invAt">At the table · ${info.players.length}</h2>
-      <ul>${seatsShown.map((n) => `<li>${avatarFor(n.toLowerCase(), n)}<span class="nm">${esc(n)}</span><em>${n === host ? 'Host' : ''}</em></li>`).join('')}${info.full ? '' : `<li class="you"><span class="av openseat">${me ? esc(me.name[0].toUpperCase()) : '?'}</span><span class="nm">You</span><em>Joining</em></li>`}</ul>
+      <ul>${seatsShown.map((n) => `<li>${avatarFor(n.toLowerCase(), n)}<span class="nm">${esc(n)}</span><em>${n === host ? 'Host' : ''}</em></li>`).join('')}${info.full ? '' : `<li class="you"><span class="av openseat">${me ? esc(me.name[0].toUpperCase()) : '?'}</span><span class="nm">You</span><em>${live ? 'Next round' : 'Joining'}</em></li>`}</ul>
       <p class="inv-status">${esc(status[0].toUpperCase() + status.slice(1))}</p>
     </section>
     <div class="inv-foot">
       ${me ? `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name, { size: 'sm' })}<span class="tx">Joining as<b>${esc(me.name)}</b></span><button class="linkbtn" id="invSwitch">Not you?</button></div>` : ''}
-      <button class="btn gold block" id="invJoin" style="min-height:58px;font-size:18px" ${info.full ? 'disabled' : ''}>${info.full ? 'This table is full' : `Join ${esc(host)}’s table`}</button>
+      <button class="btn gold block" id="invJoin" style="min-height:58px;font-size:18px" ${info.full ? 'disabled' : ''}>${esc(joinLabel)}</button>
+      ${joinNote ? `<p class="note" style="text-align:center">${esc(joinNote)}</p>` : ''}
       <p class="err" id="invErr" role="alert"></p>
       <button class="linkbtn" id="invOwn" style="align-self:center;color:var(--muted)">Start my own table instead</button>
     </div>`;
@@ -409,10 +481,41 @@ function showInvite(info) {
     const r = await send('join', { code: info.code }, true);
     if (btn) btn.disabled = false;
     if (r.ok) enterGame(info.code);
+    else if (r.waiting) showWaiting(info, r.host);
     else if (r.needLogin) { me = null; openSignIn(() => $('#invJoin').click()); }
     else if ($('#invErr')) $('#invErr').textContent = r.error || 'Couldn’t join. Try again.';
   });
 }
+
+// waiting for the host to let you in
+let waitingFor = null;
+function showWaiting(info, host) {
+  waitingFor = info.code;
+  $('#inviteBody').innerHTML = `<a class="logo" href="/" style="flex-grow:0">Last <span>Card</span></a>
+    <div class="inv-hero" style="padding-top:40px">
+      ${avatarFor(host.toLowerCase(), host, { size: 'lg' })}
+      <h1>Asked ${esc(host)} to let you in</h1>
+      <p class="note" style="font-size:15px">Table <b style="color:var(--ink);letter-spacing:.12em">${esc(info.code)}</b>. Keep this page open, you’ll go straight in.</p>
+      <div class="wait-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+    </div>
+    <div class="inv-foot"><button class="btn block" id="waitCancel">Cancel</button></div>`;
+  $('#waitCancel').onclick = async () => { waitingFor = null; await send('cancelJoin', { code: info.code }, true); showInvite(info); };
+}
+socket.on('admitted', async (m) => {
+  if (!m || m.code !== waitingFor) return;
+  waitingFor = null;
+  const r = await send('join', { code: m.code }, true);
+  if (r.ok) { enterGame(m.code); toast(`${m.host} let you in`, 'win'); } else toast(r.error || 'Couldn’t join. Try again.');
+});
+socket.on('declined', (m) => {
+  if (!m || m.code !== waitingFor) return;
+  waitingFor = null;
+  $('#inviteBody').innerHTML = `<a class="logo" href="/" style="flex-grow:0">Last <span>Card</span></a>
+    <div class="inv-hero" style="padding-top:40px"><h1>${esc(m.host)} didn’t let you in this time</h1><p class="note" style="font-size:15px">You can ask again, or start your own table.</p></div>
+    <div class="inv-foot"><button class="btn gold block" id="decAgain">Ask again</button><button class="btn block" id="decHome">Start my own table</button></div>`;
+  $('#decAgain').onclick = () => openTable(m.code);
+  $('#decHome').onclick = () => showHome();
+});
 
 /* ---------- leaderboard ---------- */
 async function showBoard(from) {
@@ -483,16 +586,30 @@ $('#rules').addEventListener('click', (e) => { const b = e.target.closest('[data
 
 function renderMenu() {
   if (!G) return;
-  const host = isHost();
-  $('#menuTitle').textContent = 'Table ' + G.code;
+  const host = isHost(), pr = !!G.practice;
+  $('#menuTitle').textContent = pr ? 'Practice' : 'Table ' + G.code;
+  $('#approveBtn').hidden = !host || pr;
+  $('#approveBtn').setAttribute('aria-pressed', String(!!(G.settings && G.settings.approve)));
+  const canAlert = pushSupported() && !pr;
+  $('#alertBtn').hidden = !canAlert;
+  if (canAlert) {
+    const perm = Notification.permission;
+    $('#alertBtn').setAttribute('aria-pressed', String(perm === 'granted' && load('lc-push') === 'on'));
+    $('#alertNote').textContent = perm === 'denied' ? 'Blocked in your browser settings for this site.' : 'A notification when it’s your turn and the app is closed.';
+  }
+  $('#menuBoard').hidden = pr; $('#menuLeave').hidden = pr;
+  $('#menuHome').textContent = pr ? 'End practice' : 'Back to home';
+  $('#menuHomeNote').textContent = pr ? 'Practice games don’t count on the leaderboard.' : 'Back to home keeps your seat. Leave table gives it up.';
   $('#soundBtn').setAttribute('aria-pressed', String(Snd.on));
   $('#menuNote').textContent = host ? 'You’re the host: you deal each round and can remove players.' : 'You can remove players who have gone offline so the game keeps moving.';
-  const canEnd = host || !isOnline(G.host);
+  const canEnd = !pr && (host || !isOnline(G.host));
   const eb = $('#menuEnd'); eb.hidden = !canEnd;
   if (canEnd && !eb.dataset.wired) { eb.dataset.wired = '1'; wireEnd(eb); }
   $('#menuEndNote').hidden = !canEnd;
   $('#menuEndNote').textContent = host ? 'Ends the game for everyone, even mid-round. Wins so far are kept on the leaderboard.' : `${nameOf(G.host)} (host) is offline, so you can end the game for everyone.`;
+  $('#menuNote').hidden = pr;
   $('#menuPlayers').innerHTML = G.players.map((p) => {
+    if (pr) return `<li>${av(p.id, '')}<span class="nm">${esc(p.name)}${p.id === G.me ? ' (you)' : ' <small style="color:var(--muted);font-weight:600">computer</small>'}<br><small style="color:var(--muted);font-weight:500">${count(p.id)} cards</small></span></li>`;
     const inRound = G.status !== 'lobby' && G.order.includes(p.id);
     const btns = [];
     // one quiet options button per player; the actions show only when you ask for them
@@ -567,6 +684,17 @@ function onState(s) {
 function render() {
   if (view !== 'game' || !G) return;
   const st = G.settings || {};
+  document.body.classList.toggle('practice', !!G.practice);
+  if (G.practice) {
+    $('#gCode').textContent = 'Practice';
+    const n = G.players.length - 1;
+    $('#gSub').textContent = `vs ${n} computer${n === 1 ? '' : 's'} · ${G.practice.level[0].toUpperCase() + G.practice.level.slice(1)} · round ${G.round || 1}`;
+    renderTable(); renderWatchers(); renderRequests();
+    if (!$('#menu').hidden) renderMenu();
+    coachUpdate();
+    return;
+  }
+  renderWatchers(); renderRequests();
   $('#gSub').textContent = G.status === 'lobby' ? 'Lobby · ' + (isHost() ? 'you’re the host' : 'hosted by ' + nameOf(G.host)) : 'Round ' + (G.round || 1) + ' · ' + (st.stack ? 'stacking on' : 'no stacking') + (st.drawUntil ? ' · draw until you can play' : '');
   if (G.status === 'lobby') renderLobby(); else renderTable();
   if (!$('#menu').hidden) renderMenu();
@@ -611,11 +739,56 @@ function renderLobby() {
   const sb = $('#startBtn'); if (sb) sb.onclick = () => send('start');
   wireClaim();
 }
+function wireOver() {
+  const ps = $('#prSetup'); if (ps) ps.onclick = () => openPracticeSetup();
+  const ph = $('#prHome'); if (ph) ph.onclick = () => { endPractice(); showHome(); };
+  const ay = $('#alertYes'); if (ay) ay.onclick = async () => { store('lc-push-asked', '1'); $('#alertAsk').remove(); const ok = await enablePush(); toast(ok ? 'Turn alerts are on' : 'Alerts are off. You can turn them on from the menu.'); };
+  const an = $('#alertNo'); if (an) an.onclick = () => { store('lc-push-asked', '1'); $('#alertAsk').remove(); };
+}
+
+/* ---------- watching ---------- */
+function watchers() { return G && G.status === 'playing' && !G.practice ? G.players.filter((p) => !G.order.includes(p.id)) : []; }
+function watchPanelHTML() {
+  const others = watchers().filter((p) => p.id !== G.me).map((p) => p.name);
+  return `<section class="watch-panel" aria-label="You’re watching">
+    <div class="wtop"><span class="pill" role="status"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Watching</span>${others.length ? `<span class="note">with ${esc(listNames(others.slice(0, 3)))}</span>` : ''}</div>
+    <p>You’re dealt in when this round ends. You can see the table and chat, but not anyone’s cards.</p>
+    <div class="row2"><button class="btn light" id="wpChat">Say hi in chat</button><button class="btn" id="wpLeave">Leave table</button></div>
+  </section>`;
+}
+function wireWatchPanel() {
+  const c = $('#wpChat'); if (c) c.onclick = () => (isWide() ? $('#chatInp').focus() : openChat());
+  const l = $('#wpLeave'); if (l) l.onclick = () => $('#menuLeave').click();
+}
+function renderWatchers() {
+  const w = watchers(), b = $('#watchBtn');
+  b.hidden = !w.length;
+  $('#watchN').textContent = w.length;
+  b.setAttribute('aria-label', `${w.length} watching`);
+  const pop = $('#watchPop');
+  if (!w.length) { pop.hidden = true; return; }
+  pop.innerHTML = `<h3>Watching · dealt in next round</h3>${w.map((p) => `<span class="w">${avatarFor(p.name.toLowerCase(), p.name, { size: 'sm' })}${esc(p.name)}${p.id === G.me ? ' (you)' : ''}</span>`).join('')}`;
+}
+$('#watchBtn').onclick = (e) => { e.stopPropagation(); const p = $('#watchPop'); p.hidden = !p.hidden; $('#watchBtn').setAttribute('aria-expanded', String(!p.hidden)); };
+document.addEventListener('click', (e) => { if (!e.target.closest('#watchPop,#watchBtn')) $('#watchPop').hidden = true; });
+
+/* ---------- join requests (host) ---------- */
+function renderRequests() {
+  const bar = $('#reqBar'), reqs = (G && !G.practice && G.requests) || [];
+  bar.hidden = !reqs.length;
+  bar.innerHTML = reqs.map((r) => `<div class="req"><span class="t"><b>${esc(r.name)}</b> wants to join</span><button class="btn sm" data-admit="${esc(r.key)}" data-ok="0">Not now</button><button class="btn gold sm" data-admit="${esc(r.key)}" data-ok="1">Let in</button></div>`).join('');
+}
+$('#reqBar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-admit]'); if (!b) return;
+  b.disabled = true; send('admit', { key: b.dataset.admit, allow: b.dataset.ok === '1' });
+});
+socket.on('joinRequest', (m) => { if (m && m.code === curCode) { Snd.play('chat'); buzz(); } });
+
 function wireClaim() { $$('#gMain [data-claim]').forEach((b) => { b.onclick = () => send('claimHost'); }); }
 
 /* ---------- table ---------- */
-function turnLeft() { return Math.max(0, IDLE_SKIP_S - Math.floor((Date.now() - G.clockSkew - (G.turnAt || 0)) / 1000)); }
-function clockText(sec) { return '0:' + String(sec).padStart(2, '0'); }
+function turnLeft() { if (G && G.practice) return IDLE_SKIP_S; return Math.max(0, IDLE_SKIP_S - Math.floor((Date.now() - G.clockSkew - (G.turnAt || 0)) / 1000)); }
+function clockText(sec) { return G && G.practice ? '' : '0:' + String(sec).padStart(2, '0'); }
 function renderTable() {
   const prevScroll = $('#hand') ? $('#hand').scrollLeft : 0;
   const meId = G.me, seated = G.order.includes(meId), hand = G.hand || [];
@@ -649,12 +822,13 @@ function renderTable() {
     </div>
     <div class="actions" id="actions"></div>
     ${seated ? `<div class="handwrap" id="handwrap"><div class="handlabel"><span>Your hand · ${hand.length}</span><span id="swipeHint">${myTurn && G.status === 'playing' ? `<span class="play">${playable} playable</span>` : G.wins[meId] ? G.wins[meId] + '★ wins' : ''}</span></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
-      : '<div class="spect">You’re watching this round. You’ll be dealt in when the next round starts.</div>'}
+      : watchPanelHTML()}
     ${G.status === 'over' ? overHTML() : ''}`;
   renderActions();
   if (seated) renderHand(hand, myTurn, prevScroll, R);
   $('#drawPile').onclick = doDraw;
   const nb = $('#nextBtn'); if (nb) nb.onclick = () => send('start');
+  wireOver();
   const ob = $('#overBoard'); if (ob) ob.onclick = () => showBoard('game');
   wireEnd();
   const nu = $('#nudgeBtn'); if (nu) nu.onclick = async () => { const r = await send('nudge'); if (r.ok) toast(`Nudged ${nameOf(G.host)}`); };
@@ -686,7 +860,7 @@ function queueHTML(myTurn) {
     const isCur = playing && u === curU, me = u === G.me, c = count(u), off = !isOnline(u);
     const label = me ? 'You' : nameOf(u);
     let sub = '', subCls = '';
-    if (isCur) { sub = me ? 'Your turn' : off ? 'Offline' : `<span id="turnClock">${clockText(turnLeft())}</span>`; subCls = 'now'; }
+    if (isCur) { sub = me ? 'Your turn' : G.practice ? 'thinking…' : off ? 'Offline' : `<span id="turnClock">${clockText(turnLeft())}</span>`; subCls = 'now'; }
     else if (off) sub = 'Offline';
     else if (playing && u === nextU && n > 2) sub = 'next';
     else if (playing && c === 1) { sub = 'Last card'; subCls = 'warn'; }
@@ -730,13 +904,15 @@ function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) 
       ${line ? `<p class="qhint ${myTurn ? 'mine' : ''}">${esc(line)}</p>` : ''}
     </div>
     ${seated ? `<div class="handwrap q" id="handwrap"><div class="hbar" role="status">${pill}<div class="actions" id="actions"></div></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
-      : '<div class="spect">You’re watching this round. You’ll be dealt in when the next round starts.</div>'}
+      : watchPanelHTML()}
     ${G.status === 'over' ? overHTML() : ''}`;
   lastTopV = G.v; flipRing = false; qAdvance = false;
+  wireWatchPanel();
   renderActions();
   if (seated) renderHand(hand, myTurn, prevScroll, R);
   $('#drawPile').onclick = doDraw;
   const nb = $('#nextBtn'); if (nb) nb.onclick = () => send('start');
+  wireOver();
   const ob = $('#overBoard'); if (ob) ob.onclick = () => showBoard('game');
   wireEnd();
   const nu = $('#nudgeBtn'); if (nu) nu.onclick = async () => { const r = await send('nudge'); if (r.ok) toast(`Nudged ${nameOf(G.host)}`); };
@@ -1017,17 +1193,210 @@ setInterval(() => {
 
 function overHTML() {
   const ps = G.order.slice().sort((a, b) => (G.wins[b] || 0) - (G.wins[a] || 0) || count(a) - count(b));
+  if (G.practice) {
+    const close = ps.find((u) => u !== G.winner && count(u) === 1);
+    return `<div class="sheet" style="position:fixed"><div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="winT">
+    <span class="grab" aria-hidden="true"></span>
+    <div class="over-head">${av(G.winner, 'md')}<div><p class="eyebrow">Practice · round ${G.round || 1}</p><h2 id="winT">${G.winner === G.me ? 'You win!' : esc(nameOf(G.winner)) + ' wins!'}</h2>${close ? `<p class="note">${close === G.me ? 'You were' : esc(nameOf(close)) + ' was'} one card away</p>` : ''}</div></div>
+    <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${u === G.me ? 'You' : esc(nameOf(u)) + ' <small style="color:var(--muted);font-weight:600">computer</small>'}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
+    <p class="note">Practice wins stay here. They don’t go on the leaderboard.</p>
+    <button class="btn gold block" id="nextBtn" style="min-height:54px">Play again</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn light" id="prSetup">Change setup</button><button class="btn" id="prHome">Home</button></div>
+  </div></div>`;
+  }
+  const askAlerts = pushSupported() && Notification.permission === 'default' && !load('lc-push-asked');
   const rec = recorded && recorded.round === G.round ? recorded : null;
   return `<div class="sheet" style="position:fixed"><div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="winT">
     <span class="grab" aria-hidden="true"></span>
     <div class="over-head">${av(G.winner, 'md')}<div><p class="eyebrow">Round ${G.round || 1} is over</p><h2 id="winT">${G.winner === G.me ? 'You win!' : esc(nameOf(G.winner)) + ' wins!'}</h2></div></div>
     ${rec ? `<div class="gold-box" style="display:flex;align-items:center;gap:10px;font-size:14px">${ICON.trophy}<span>+1 win for ${G.winner === G.me ? 'you' : esc(nameOf(G.winner))}${rec.rank ? ` · now <b>#${rec.rank}</b> on the leaderboard` : ''}</span></div>` : ''}
     ${chatPeekHTML()}
+    ${askAlerts ? `<div class="alert-ask" id="alertAsk"><span class="t"><b>Get a nudge on your turn?</b><span>Only for your turn and round results.</span></span><button class="btn sm" id="alertNo">Not now</button><button class="btn sm light" id="alertYes">Turn on</button></div>` : ''}
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
     ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal round ${(G.round || 1) + 1}</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
       : `${isOnline(G.host) ? `<p class="note" style="text-align:center;color:var(--soft)">Waiting for <b style="color:var(--ink)">${esc(nameOf(G.host))}</b> (host) to deal the next round</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="nudgeBtn">Nudge ${esc(nameOf(G.host))}</button><button class="btn light" id="overBoard">Leaderboard</button></div>` : `${hostWaitHTML('deal')}<button class="btn" id="overBoard">Leaderboard</button>`}`}
   </div></div>`;
 }
+
+/* ---------- practice vs computer ----------
+   The whole game runs here on the phone with the same rules engine as the server, so it works
+   offline and never touches the leaderboard. Computer players think for a moment before playing. */
+const PRACTICE = 'PRACTICE';
+// engine.js puts its rules on the page as plain functions; gather the ones practice needs
+const E = { dealRound, applyPlay, applyDraw, applyPass, applyCatch, applyLateCall, applySkipIdle, canPlay, cc, cv, nextUid };
+const BOT_NAMES = ['Pixel', 'Bolt', 'Echo', 'Nova', 'Ziggy'];
+const LEVEL_NOTE = {
+  easy: 'Plays the first card it can. Sometimes forgets to call Last card.',
+  normal: 'Saves its Wilds and +4s for when they matter, and remembers to call Last card.',
+  sharp: 'Like Normal, and goes after whoever is close to winning. Catches you if you forget to call.',
+};
+let practice = null;
+let prOpts = (() => { try { return Object.assign({ n: 3, level: 'normal', stack: true, drawUntil: false, coach: !load('lc-coach-done') }, JSON.parse(load('lc-practice') || '{}')); } catch (e) { return { n: 3, level: 'normal', stack: true, drawUntil: false, coach: true }; } })();
+if (!load('lc-coach-done') && prOpts.coach === false) prOpts.coach = false;
+function openPracticeSetup() {
+  closeSheets();
+  const paint = () => {
+    $('#prN').textContent = prOpts.n;
+    $('#prBots').innerHTML = BOT_NAMES.slice(0, prOpts.n).map((n) => avatarFor(n.toLowerCase(), n, { size: 'sm' })).join('');
+    $$('#prLevel [data-lv]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.lv === prOpts.level)));
+    $('#prLvNote').textContent = LEVEL_NOTE[prOpts.level];
+    $$('#practice [data-pr]').forEach((b) => b.setAttribute('aria-pressed', String(!!prOpts[b.dataset.pr])));
+    $('#prMinus').disabled = prOpts.n <= 1; $('#prPlus').disabled = prOpts.n >= 5;
+  };
+  $('#prMinus').onclick = () => { prOpts.n = Math.max(1, prOpts.n - 1); paint(); };
+  $('#prPlus').onclick = () => { prOpts.n = Math.min(5, prOpts.n + 1); paint(); };
+  $('#prLevel').onclick = (e) => { const b = e.target.closest('[data-lv]'); if (b) { prOpts.level = b.dataset.lv; paint(); } };
+  $$('#practice [data-pr]').forEach((b) => { b.onclick = () => { prOpts[b.dataset.pr] = !prOpts[b.dataset.pr]; paint(); }; });
+  $('#prStart').onclick = () => { store('lc-practice', JSON.stringify(prOpts)); closeSheets(); startPractice(); };
+  paint();
+  $('#practice').hidden = false;
+}
+function startPractice() {
+  if (curCode && curCode !== PRACTICE) send('away', {}, true);
+  const bots = BOT_NAMES.slice(0, prOpts.n).map((name, i) => ({ id: 'bot' + i, name }));
+  const s = { code: PRACTICE, host: 'you', status: 'lobby', settings: { stack: !!prOpts.stack, drawUntil: !!prOpts.drawUntil }, v: 0, wins: {}, round: 0, order: [], hands: {}, deck: [], discard: [], log: [] };
+  practice = { s, bots, level: prOpts.level, coach: !!prOpts.coach, seen: new Set(), hint: null, timer: null, extra: [] };
+  curCode = PRACTICE; G = null; seenV = -1; lastTopV = -1; armedCall = false; chatMsgs = []; unread = 0; recorded = null;
+  show('game'); setHash(''); $('#gCode').textContent = 'Practice';
+  E.dealRound(s, ['you', ...bots.map((b) => b.id)]); s.v++;
+  practiceEmit();
+}
+function endPractice() {
+  if (!practice) return;
+  clearTimeout(practice.timer); practice.extra.forEach(clearTimeout);
+  practice = null; hideCoach();
+  if (curCode === PRACTICE) { curCode = null; G = null; }
+}
+function practiceView() {
+  const s = practice.s, counts = {};
+  for (const [u, h] of Object.entries(s.hands)) counts[u] = h.length;
+  return {
+    code: PRACTICE, me: 'you', host: 'you', status: s.status, settings: s.settings, round: s.round, v: s.v,
+    players: [{ id: 'you', name: me ? me.name : 'You', online: true }, ...practice.bots.map((b) => ({ id: b.id, name: b.name, online: true, bot: true }))],
+    gone: {}, order: s.order.slice(), turn: s.turn, dir: s.dir, pending: s.pending || 0, drew: !!s.drew, color: s.color,
+    top: s.discard[s.discard.length - 1] || null, pile: s.discard.length, deckCount: s.deck.length, counts, hand: (s.hands.you || []).slice(),
+    unsafe: s.unsafe || null, turnAt: s.turnAt || 0, winner: s.winner || null, wins: Object.assign({}, s.wins), log: s.log.slice(-6),
+    now: Date.now(), requests: [], practice: { level: practice.level },
+  };
+}
+function practiceEmit() {
+  if (!practice) return;
+  onState(practiceView());
+  practiceSchedule();
+}
+function practiceAct(ev, d) {
+  if (!practice) return { ok: false };
+  const s = practice.s;
+  let ok = false;
+  if (ev === 'play') ok = E.applyPlay(s, 'you', d.i, d.color, !!d.called);
+  else if (ev === 'draw') ok = E.applyDraw(s, 'you');
+  else if (ev === 'pass') ok = E.applyPass(s, 'you');
+  else if (ev === 'lateCall') ok = E.applyLateCall(s, 'you', s.unsafeV);
+  else if (ev === 'catch') ok = !!s.unsafe && s.unsafe !== 'you' && E.applyCatch(s, 'you', s.unsafe, s.unsafeV);
+  else if (ev === 'start') { if (s.status !== 'playing') { E.dealRound(s, ['you', ...practice.bots.map((b) => b.id)]); ok = true; } }
+  else if (ev === 'away' || ev === 'leave') { endPractice(); return { ok: true }; }
+  else return { ok: false };
+  if (ok) { s.v++; practiceEmit(); }
+  return { ok: !!ok };
+}
+// what a computer player does on its turn
+function botChoose(id) {
+  const s = practice.s, h = s.hands[id], lvl = practice.level;
+  const idx = h.map((c, i) => i).filter((i) => (!s.drew || i === h.length - 1) && E.canPlay(h[i], s));
+  if (!idx.length) return null;
+  if (lvl === 'easy') return idx[Math.floor(Math.random() * idx.length)];
+  const next = E.nextUid(s), nextLeft = (s.hands[next] || []).length;
+  const v = (i) => E.cv(h[i]), wild = (i) => E.cc(h[i]) === 'w';
+  const score = (i) => {
+    let sc = 0;
+    if (wild(i)) sc -= h.length > 3 ? 30 : 5;                       // keep Wilds for later
+    if ('SRD'.includes(v(i))) sc += lvl === 'sharp' && nextLeft <= 2 ? 40 : 8;
+    if (v(i) === 'F') sc += lvl === 'sharp' && nextLeft <= 2 ? 45 : 0;
+    if (/\d/.test(v(i))) sc += Number(v(i));                         // shed high numbers first
+    if (E.cc(h[i]) === s.color) sc += 3;
+    return sc + Math.random();
+  };
+  return idx.sort((a, b) => score(b) - score(a))[0];
+}
+function botColour(id, playIdx) {
+  const h = practice.s.hands[id], n = { r: 0, y: 0, g: 0, b: 0 };
+  h.forEach((c, i) => { if (i !== playIdx && n[E.cc(c)] !== undefined) n[E.cc(c)]++; });
+  const best = Object.keys(n).sort((a, b) => n[b] - n[a])[0];
+  return practice.level === 'easy' && Math.random() < 0.4 ? 'rygb'[Math.floor(Math.random() * 4)] : best;
+}
+function botMove(id) {
+  if (!practice) return;
+  const s = practice.s;
+  if (s.status !== 'playing' || s.order[s.turn] !== id) return;
+  const i = botChoose(id);
+  let ok;
+  if (i === null) ok = s.drew ? E.applyPass(s, id) : E.applyDraw(s, id);
+  else {
+    const h = s.hands[id];
+    const willCall = h.length === 2 && (practice.level !== 'easy' || Math.random() < 0.6);
+    ok = E.applyPlay(s, id, i, E.cc(h[i]) === 'w' ? botColour(id, i) : undefined, willCall);
+  }
+  if (!ok) ok = E.applyDraw(s, id) || E.applyPass(s, id) || E.applySkipIdle(s, id);
+  s.v++; practiceEmit();
+}
+function practiceSchedule() {
+  if (!practice) return;
+  clearTimeout(practice.timer);
+  const s = practice.s;
+  if (s.status !== 'playing') return;
+  const cur = s.order[s.turn];
+  if (cur !== 'you') practice.timer = setTimeout(() => botMove(cur), (s.drew ? 500 : 850) + Math.random() * 650);
+  // someone forgot to call Last card: computers catch you (or fix their own slip) after a moment
+  if (s.unsafe && !practice.extra.unsafeTag) {
+    const tag = s.unsafe + ':' + s.unsafeV; practice.extra.unsafeTag = tag;
+    const who = s.unsafe, v = s.unsafeV, lvl = practice.level;
+    const chance = who === 'you' ? { easy: 0.25, normal: 0.6, sharp: 0.95 }[lvl] : 0.5;
+    const wait = who === 'you' ? (lvl === 'sharp' ? 2200 : 3500) : 4500;
+    practice.extra.push(setTimeout(() => {
+      practice && (practice.extra.unsafeTag = null);
+      if (!practice || practice.s.unsafe !== who || practice.s.unsafeV !== v || Math.random() > chance) return;
+      const st = practice.s;
+      const ok = who === 'you' ? E.applyCatch(st, practice.bots[Math.floor(Math.random() * practice.bots.length)].id, who, v) : E.applyLateCall(st, who, v);
+      if (ok) { st.v++; practiceEmit(); }
+    }, wait));
+  }
+}
+
+/* ---------- practice coach: one short tip at a time, each only once ---------- */
+const COACH = [
+  ['late', (G, my) => G.unsafe === G.me, () => 'You didn’t call! Tap “Say Last card!” quickly, before someone catches you.'],
+  ['catch', (G) => G.unsafe && G.unsafe !== G.me, (G) => `${nameOf(G.unsafe)} forgot to call Last card! Tap Catch to give them 2 cards.`],
+  ['stack', (G, my) => my && G.pending > 0, (G) => `A +${G.pending} is coming at you. Play your own +2 or +4 to pass it on, or tap Draw to take them.`],
+  ['last', (G, my) => my && G.hand.length === 2 && !armedCall, () => 'Two cards left! Tap “Last card!” first, then play. Forget, and you can be caught for +2.'],
+  ['drawn', (G, my) => my && G.drew, () => 'You drew a card. Play it if it glows, or tap Pass to keep it.'],
+  ['draw', (G, my, ok) => my && !G.drew && !G.pending && !ok, () => 'Nothing matches the pile. Tap Draw to take a card.'],
+  ['match', (G, my, ok) => my && ok, () => 'Match the pile’s colour or number. The glowing cards are the ones you can play.'],
+  ['wild', (G, my, ok) => my && G.hand.some((c) => E.cc(c) === 'w') && ok, () => 'Wild cards go on anything. You’ll pick the next colour.'],
+];
+function hideCoach() { const c = $('#coach'); if (c) c.hidden = true; }
+function coachUpdate() {
+  if (!practice || !practice.coach || !G || G.status !== 'playing' || view !== 'game') { hideCoach(); return; }
+  const my = G.order[G.turn] === G.me;
+  const R = { discard: [G.top], color: G.color, pending: G.pending };
+  const ok = (G.hand || []).some((c, i) => (!G.drew || i === G.hand.length - 1) && E.canPlay(c, R));
+  const cur = practice.hint && COACH.find((h) => h[0] === practice.hint);
+  if (cur && cur[1](G, my, ok)) return placeCoach();
+  practice.hint = null;
+  const next = COACH.find((h) => !practice.seen.has(h[0]) && h[1](G, my, ok));
+  if (!next) { hideCoach(); if (practice.seen.size >= 5) store('lc-coach-done', '1'); return; }
+  practice.hint = next[0]; practice.seen.add(next[0]);
+  $('#coachText').textContent = next[2](G);
+  $('#coach').hidden = false; placeCoach();
+}
+function placeCoach() {
+  const hw = $('#handwrap'), c = $('#coach');
+  if (!c) return;
+  if (!hw) { c.style.bottom = '24px'; return; }
+  const r = hw.getBoundingClientRect();
+  c.style.bottom = Math.max(8, window.innerHeight - r.top + 10) + 'px';
+  if (isWide()) { c.style.left = r.left + 'px'; c.style.right = 'auto'; c.style.maxWidth = Math.min(520, r.width) + 'px'; } else { c.style.left = '12px'; c.style.right = '12px'; c.style.maxWidth = ''; }
+}
+$('#coachOk').onclick = () => { hideCoach(); if (practice) practice.hint = null; };
 
 /* ---------- keyboard (desktop) ---------- */
 document.addEventListener('keydown', (e) => {

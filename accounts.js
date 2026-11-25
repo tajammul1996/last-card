@@ -203,7 +203,33 @@ async function leaderboard(game, limit = 50, period = 'all', mineKey = null) {
   return out;
 }
 
+// ---------- turn alerts: push subscriptions per account, and the server's VAPID keys ----------
+const PUSH_TTL = 180 * 24 * 3600;
+const hashOf = (s) => crypto.createHash('sha256').update(String(s)).digest('hex').slice(0, 16);
+async function savePush(acctKey, sub) {
+  if (!acctKey || !sub || !sub.endpoint) return false;
+  const k = 'lc:push:' + acctKey, f = hashOf(sub.endpoint), v = JSON.stringify(sub);
+  if (r) { await r.hSet(k, f, v); await r.expire(k, PUSH_TTL); }
+  else { const m = mem.kv.get(k) || {}; m[f] = v; mem.kv.set(k, m); }
+  return true;
+}
+async function pushSubs(acctKey) {
+  const k = 'lc:push:' + acctKey;
+  const all = r ? await r.hGetAll(k) : mem.kv.get(k) || {};
+  return Object.values(all).map((v) => { try { return JSON.parse(v); } catch (e) { return null; } }).filter(Boolean);
+}
+async function dropPush(acctKey, endpoint) {
+  const k = 'lc:push:' + acctKey;
+  if (r) await r.hDel(k, hashOf(endpoint)); else { const m = mem.kv.get(k); if (m) delete m[hashOf(endpoint)]; }
+}
+async function meta(key, make) {
+  const k = 'lc:meta:' + key;
+  let v = r ? await r.get(k) : mem.kv.get(k);
+  if (!v && make) { v = JSON.stringify(make()); if (r) await r.set(k, v, { NX: true }); else mem.kv.set(k, v); v = r ? await r.get(k) : v; }
+  return v ? JSON.parse(v) : null;
+}
+
 const persistent = () => !!r;
 async function close() { if (r) { try { await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, GAMES: { lastcard: 'Last Card' } };
+module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, GAMES: { lastcard: 'Last Card' } };

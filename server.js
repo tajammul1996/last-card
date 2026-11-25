@@ -25,7 +25,7 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const KEY = (code) => 'lc:t:' + code;
 
 // ---------- static files ----------
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('ok'); }
@@ -34,11 +34,31 @@ const server = http.createServer((req, res) => {
   if (!full.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
   fs.readFile(full, (err, data) => {
     if (err) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('Not found'); }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(full)] || 'application/octet-stream', 'cache-control': 'no-cache' });
+    const extra = file === '/sw.js' ? { 'service-worker-allowed': '/' } : {};
+    res.writeHead(200, { 'content-type': TYPES[path.extname(full)] || 'application/octet-stream', 'cache-control': /^\/icons\//.test(file) ? 'public, max-age=86400' : 'no-cache', ...extra });
     res.end(data);
   });
 });
 
+const webpush = require('web-push');
+let vapidPublic = null;
+async function setupPush() {
+  try {
+    const keys = process.env.VAPID_PUBLIC && process.env.VAPID_PRIVATE
+      ? { publicKey: process.env.VAPID_PUBLIC, privateKey: process.env.VAPID_PRIVATE }
+      : await Accounts.meta('vapid', () => webpush.generateVAPIDKeys());
+    webpush.setVapidDetails(process.env.RENDER_EXTERNAL_URL || 'mailto:lastcard@example.com', keys.publicKey, keys.privateKey);
+    vapidPublic = keys.publicKey;
+  } catch (e) { console.error('turn alerts off:', e.message); }
+}
+async function sendPush(acctKey, payload) {
+  if (!vapidPublic || !acctKey) return;
+  const subs = await Accounts.pushSubs(acctKey).catch(() => []);
+  for (const sub of subs) {
+    webpush.sendNotification(sub, JSON.stringify(payload), { TTL: 120 })
+      .catch((e) => { if (e.statusCode === 404 || e.statusCode === 410) Accounts.dropPush(acctKey, sub.endpoint).catch(() => {}); });
+  }
+}
 const io = new Server(server, { pingInterval: 20_000, pingTimeout: 25_000, maxHttpBufferSize: 10_000 });
 
 // ---------- state ----------
@@ -100,6 +120,7 @@ function install(nt) {
       if (np) for (const sid of p.sockets) np.sockets.add(sid);
     }
   }
+  if (old) { nt.requests = old.requests; nt.allowed = old.allowed; }
   tables.set(nt.code, nt);
   for (const p of nt.players.values()) remember(nt, p);
   return nt;
@@ -167,6 +188,7 @@ function viewFor(t, pid) {
     color: s.color, top: s.discard[s.discard.length - 1] || null, pile: s.discard.length, deckCount: s.deck.length,
     counts, hand: (s.hands && s.hands[pid]) || [], unsafe: s.unsafe || null, turnAt: s.turnAt || 0,
     winner: s.winner || null, wins: s.wins || {}, log: (s.log || []).slice(-6), now: Date.now(),
+    requests: pid === s.host && t.requests ? [...t.requests.entries()].map(([key, r]) => ({ key, name: r.name })) : [],
   };
 }
 
@@ -174,7 +196,32 @@ function broadcast(t, save = true) {
   for (const p of t.players.values()) {
     for (const sid of p.sockets) io.to(sid).emit('state', viewFor(t, p.id));
   }
-  if (save) markDirty(t);
+  if (save) { markDirty(t); maybeAlert(t); }
+}
+function plainLog(t) {
+  const lg = (t.s.log || []).slice(-1)[0];
+  if (!lg) return '';
+  return String(lg.msg).replace(/\{\{([^}]+)\}\}/g, (_, u) => { const p = t.players.get(u); return p ? p.name : (t.names && t.names[u]) || 'Someone'; });
+}
+function maybeAlert(t) {
+  const s = t.s;
+  if (s.status === 'playing') {
+    const u = s.order[s.turn], p = t.players.get(u), tag = s.round + ':' + s.turnAt;
+    if (!p || !p.account || isOnline(p) || p.alerted === tag) return;
+    p.alerted = tag;
+    // give a phone that is just reconnecting a moment before buzzing it
+    setTimeout(() => {
+      const t2 = tables.get(t.code), p2 = t2 && t2.players.get(u);
+      if (!t2 || !p2 || isOnline(p2) || t2.s.status !== 'playing' || t2.s.order[t2.s.turn] !== u || t2.s.round + ':' + t2.s.turnAt !== tag) return;
+      sendPush(p2.account, { title: `Your turn at ${t2.code}`, body: plainLog(t2), url: '/#' + t2.code, tag: 'lc-' + t2.code });
+    }, 4000);
+  } else if (s.status === 'over' && t.overAlerted !== s.round) {
+    t.overAlerted = s.round;
+    const w = t.players.get(s.winner);
+    for (const p of t.players.values()) {
+      if (p.account && !isOnline(p) && s.order.includes(p.id)) sendPush(p.account, { title: `Round over at ${t.code}`, body: `${w ? w.name : 'Someone'} wins`, url: '/#' + t.code, tag: 'lc-' + t.code });
+    }
+  }
 }
 
 function seatedOrder(t) {
@@ -300,7 +347,7 @@ io.on('connection', (socket) => {
     return {
       code: t.code, status: t.s.status, round: t.s.round || 0, host: host ? host.name : null,
       players: [...t.players.values()].sort((a, b) => a.joined - b.joined).map((x) => x.name),
-      full: t.players.size >= MAX_PLAYERS,
+      full: t.players.size >= MAX_PLAYERS, approve: !!(t.s.settings && t.s.settings.approve),
     };
   };
   const lastFor = () => {
@@ -400,6 +447,19 @@ io.on('connection', (socket) => {
     const mine = findSeat(t);
     if (mine) { adoptSeat(t, mine); attach(socket, t, mine); return ack({ ok: true, code }); }
     if (t.players.size >= MAX_PLAYERS) return ack({ ok: false, error: 'That table is full (10 players).' });
+    const akey = socket.data.account.key;
+    if (t.s.settings && t.s.settings.approve && !(t.allowed && t.allowed.has(akey))) {
+      t.requests = t.requests || new Map();
+      const req = t.requests.get(akey) || { name: socket.data.account.name, sockets: new Set(), at: Date.now() };
+      req.sockets.add(socket.id); t.requests.set(akey, req);
+      socket.data.asked = code;
+      const host = t.players.get(t.s.host);
+      if (host) for (const sid of host.sockets) io.to(sid).emit('joinRequest', { code, name: req.name });
+      broadcast(t, false);
+      return ack({ ok: false, waiting: true, code, host: host ? host.name : 'the host' });
+    }
+    if (t.allowed) t.allowed.delete(akey);
+    if (t.requests) t.requests.delete(akey);
     // leaving a lobby elsewhere frees that seat; a seat in a running game is kept so you can go back
     const old = ctx(); if (old && old.t.code !== code && old.s.status === 'lobby') removePlayer(old.t, old.me);
     const id = rid(6);
@@ -408,6 +468,31 @@ io.on('connection', (socket) => {
     attach(socket, t, p);
     io.to(code).emit('presence', { code, type: 'joined', id, name: p.name, status: t.s.status });
     ack({ ok: true, code });
+  });
+
+  on('admit', ({ key, allow }, ack) => {
+    const c = ctx(); if (!c) return ack({ ok: false });
+    if (!hostOnly(c, ack)) return;
+    const req = c.t.requests && c.t.requests.get(key);
+    if (!req) return ack({ ok: false, error: 'They stopped waiting.' });
+    c.t.requests.delete(key);
+    if (allow) { c.t.allowed = c.t.allowed || new Set(); c.t.allowed.add(key); }
+    for (const sid of req.sockets) io.to(sid).emit(allow ? 'admitted' : 'declined', { code: c.t.code, host: c.p.name });
+    broadcast(c.t, false);
+    ack({ ok: true });
+  });
+  on('cancelJoin', ({ code }, ack) => {
+    const t = tables.get(String(code || '').toUpperCase());
+    const key = socket.data.account && socket.data.account.key;
+    if (t && t.requests && key && t.requests.delete(key)) broadcast(t, false);
+    socket.data.asked = null;
+    ack({ ok: true });
+  });
+  on('vapid', (_, ack) => ack({ ok: !!vapidPublic, key: vapidPublic }));
+  on('pushSub', async ({ sub }, ack) => {
+    if (!socket.data.account) return ack({ ok: false });
+    const ok = await Accounts.savePush(socket.data.account.key, sub).catch(() => false);
+    ack({ ok });
   });
 
   on('leave', (_, ack) => { const c = ctx(); if (c) removePlayer(c.t, c.me); ack({ ok: true }); });
@@ -434,8 +519,9 @@ io.on('connection', (socket) => {
 
   // ----- host-only controls -----
   on('setting', ({ key }, ack) => {
-    const c = ctx(); if (!c || !['stack', 'drawUntil'].includes(key)) return ack({ ok: false });
+    const c = ctx(); if (!c || !['stack', 'drawUntil', 'approve'].includes(key)) return ack({ ok: false });
     if (!hostOnly(c, ack)) return;
+    if (key === 'approve') return ack({ ok: act(c.t, (s) => { s.settings.approve = !s.settings.approve; }) });
     ack({ ok: act(c.t, (s) => { if (s.status !== 'lobby') return false; s.settings[key] = !s.settings[key]; }) });
   });
   on('start', (_, ack) => {
@@ -528,6 +614,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    const at = socket.data.asked && tables.get(socket.data.asked);
+    if (at && at.requests) for (const [k, r] of at.requests) { r.sockets.delete(socket.id); if (!r.sockets.size) { at.requests.delete(k); broadcast(at, false); } }
     const c = ctx();
     if (c) { c.p.sockets.delete(socket.id); broadcast(c.t, false); }
   });
@@ -562,5 +650,5 @@ async function shutdown(sig) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-const ready = Promise.all([connectStore(), Accounts.init(process.env.STORE_URL || process.env.REDIS_URL)]).then(() => new Promise((r) => server.listen(PORT, () => { console.log(`Last Card ${BUILD} listening on :${PORT}`); r(); })));
+const ready = Promise.all([connectStore(), Accounts.init(process.env.STORE_URL || process.env.REDIS_URL)]).then(setupPush).then(() => new Promise((r) => server.listen(PORT, () => { console.log(`Last Card ${BUILD} listening on :${PORT}`); r(); })));
 module.exports = { server, io, tables, ready, flush };
