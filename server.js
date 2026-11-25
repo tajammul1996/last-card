@@ -502,8 +502,11 @@ io.on('connection', (socket) => {
     const per = period === 'week' ? 'week' : 'all';
     const mineKey = socket.data.account && socket.data.account.key;
     const rows = await Accounts.leaderboard(g, Math.min(Math.max(Number(limit) || 50, 1), 50), per, mineKey);
-    const pub = (x) => x && ({ rank: x.rank, name: x.name, wins: x.wins, played: x.played, last: x.last, me: x.key === mineKey });
-    ack({ ok: true, game: g, period: per, games: Accounts.GAMES, persistent: Accounts.persistent(), rows: rows.map(pub), mine: pub(rows.mine) });
+    // who has the app open right now (signed in, connected)
+    const on = new Set();
+    for (const sock of io.sockets.sockets.values()) if (sock.connected && sock.data.account) on.add(sock.data.account.key);
+    const pub = (x) => x && ({ rank: x.rank, name: x.name, wins: x.wins, played: x.played, last: x.last, me: x.key === mineKey, online: on.has(x.key) });
+    ack({ ok: true, game: g, period: per, games: Accounts.GAMES, persistent: Accounts.persistent(), rows: rows.map(pub), mine: pub(rows.mine), online: on.size });
   });
 
   // a gentle "your turn to deal" poke at the host, at most every 15 seconds

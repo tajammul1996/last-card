@@ -496,6 +496,9 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .clock:empty{display:none}
 .practice #chatBtn,.practice #reactBtn,.practice #watchBtn{display:none}
 @media (min-width:1024px){.practice .chat{display:none}}
+.ondot{display:inline-block;width:8px;height:8px;margin-left:6px;border-radius:50%;background:var(--online);box-shadow:0 0 0 2px rgba(61,220,132,.2);vertical-align:middle}
+.on-now{color:var(--online);font-weight:800}
+.lb-online{margin:0;display:flex;align-items:center;gap:2px;font-size:14px;font-weight:700;color:var(--soft)}.lb-online .ondot{margin:0 8px 0 2px}
 .fxl{position:fixed;z-index:45;pointer-events:none;display:grid;place-items:center}
 .fx-shock{border-radius:50%;border:5px solid var(--gold);box-sizing:border-box}
 .fx-wash{border-radius:50%;background:radial-gradient(circle,var(--wc) 0%,var(--wc) 35%,transparent 70%)}
@@ -642,6 +645,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
         <button data-period="week" aria-pressed="true">This week</button><button data-period="all" aria-pressed="false">All time</button>
       </div>
     </div>
+    <p class="lb-online" id="lbOnline" hidden></p>
     <div class="podium" id="podium" aria-label="Top three"></div>
     <div class="lbhead" aria-hidden="true"><span>Rank</span><span>Player</span><span style="text-align:right">Wins</span><span style="text-align:right">Games</span><span style="text-align:right">Win %</span><span>Last played</span></div>
     <ol class="lbrows" id="lbRows"></ol>
