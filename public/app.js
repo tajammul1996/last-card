@@ -529,7 +529,6 @@ async function showBoard(from) {
   if (!r.ok) { $('#lbRows').innerHTML = '<li class="lbrow"><span></span><span class="nm"><b>Couldn’t load the leaderboard. Try again.</b></span><span></span></li>'; return; }
   const games = Object.assign({ all: 'All games' }, r.games || {});
   $('#lbGames').hidden = Object.keys(games).length <= 2;
-  const onl = $('#lbOnline'); onl.hidden = !r.online; onl.innerHTML = `<i class="ondot" aria-hidden="true"></i>${r.online} online now`;
   $('#lbGames').innerHTML = Object.entries(games).map(([k, v]) => `<button data-g="${esc(k)}" aria-pressed="${k === r.game}">${esc(v)}</button>`).join('');
   const pct = (x) => (x.played ? Math.round((100 * x.wins) / x.played) : 0) + '%';
   const nm = (x) => esc(x.name) + (x.me ? ' (you)' : '') + (x.online ? ONDOT : '');
@@ -539,7 +538,7 @@ async function showBoard(from) {
     const x = top[i];
     return `<div class="pod p${i + 1}"><span class="rkn">${i + 1}</span>${avatarFor(x.name.toLowerCase(), x.name, { size: i === 0 ? 'md' : '', online: x.online || undefined })}<span class="nm">${nm(x)}</span><span class="dnm"><b>${nm(x)}</b><small>${x.played} games · ${pct(x)} won</small></span><span class="dw">${x.wins}</span><div class="blk"><b>${x.wins}</b><small>win${x.wins === 1 ? '' : 's'}</small></div></div>`;
   }).join('');
-  const row = (x) => `<span class="rk">${x.rank}</span><span class="nm"><b>${nm(x)}</b><small>${x.online ? '<b class="on-now">Online now</b> · ' : ''}${x.played} game${x.played === 1 ? '' : 's'} · ${pct(x)} won</small></span><span class="w">${x.wins}</span><span class="xc">${x.played}</span><span class="xc">${pct(x)}</span><span class="xc last">${x.online ? '<b class="on-now">Online now</b>' : ago(x.last)}</span>`;
+  const row = (x) => `<span class="rk">${x.rank}</span><span class="nm"><b>${nm(x)}</b><small>${x.played} game${x.played === 1 ? '' : 's'} · ${pct(x)} won</small></span><span class="w">${x.wins}</span><span class="xc">${x.played}</span><span class="xc">${pct(x)}</span><span class="xc last">${ago(x.last)}</span>`;
   const rest = isWide() ? r.rows : r.rows.slice(3);
   $('#lbRows').innerHTML = rest.length ? rest.map((x) => `<li class="lbrow ${x.me ? 'me' : ''}">${row(x)}</li>`).join('')
     : (r.rows.length ? '' : `<li class="lbrow"><span></span><span class="nm"><b>No wins ${boardPeriod === 'week' ? 'this week' : 'yet'}</b><small>Finish a round while signed in and you’ll show up here.</small></span><span></span></li>`);
