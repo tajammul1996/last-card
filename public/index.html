@@ -637,6 +637,60 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .okline{color:#3ddc84!important;font-weight:700}.okline::before{content:"✓ "}
 .tipbox{margin:0;padding:12px 14px;border-radius:14px;background:var(--fill);font-size:14px;line-height:1.45;color:var(--soft)}.tipbox .linkbtn{display:inline;min-height:0;font-size:14px;color:var(--ink);text-decoration:underline}
 .auth-links{display:flex;flex-direction:column;align-items:center;gap:2px}.auth-links .linkbtn{min-height:44px}.linkbtn.muted{color:var(--soft)}
+.fbpill{position:relative;display:flex;align-items:center;gap:7px;min-height:44px;padding:0 14px;border-radius:99px;background:var(--fill);border:1px solid var(--line);font-weight:700;font-size:14px;color:var(--ink)}
+#menuBtn,#menuFb{position:relative}
+.fbpill .dot,#menuFb .dot,#menuBtn .dot{position:absolute;top:6px;right:6px;width:10px;height:10px;border-radius:50%;background:#ff6b5e;box-shadow:0 0 0 2px var(--felt)}
+.fbpill .dot[hidden],#menuFb .dot[hidden],#menuBtn .dot[hidden]{display:none}
+@media (max-width:380px){.fbpill span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}.fbpill{padding:0 12px}}
+.fbwrap{display:flex;flex-direction:column;gap:16px;padding-bottom:40px;max-width:640px}
+.fb-intro{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:20px;background:var(--panel);border:1px solid var(--line-2)}
+.fb-intro p{margin:0;font-size:15px;line-height:1.45;color:var(--soft)}
+.fb-h{margin:4px 0 0;font-family:var(--body);font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.fb-item{display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:18px;background:var(--panel);border:1px solid var(--line-2);text-align:left;color:var(--ink);width:100%}
+.fb-item.unread{border:1.5px solid var(--gold);background:#16374f}
+.fb-item .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.fb-item b{font-size:15px;line-height:1.35}.fb-item .sub{font-size:13px;color:var(--muted)}.fb-item .sub.hot{color:var(--gold);font-weight:700}
+.fb-item .udot{margin-left:auto;width:10px;height:10px;border-radius:50%;background:#ff6b5e}
+.kchip,.schip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:800;white-space:nowrap}
+.kchip.idea{background:var(--gold);color:var(--gold-ink)}.kchip.problem{background:#ff8a7f;color:#2b0d0a}.kchip.other{background:var(--fill);color:var(--ink)}.kchip.pin{background:#c4b5fd;color:#1e1342}
+.schip.new{border:1px solid var(--line);color:var(--soft)}.schip.seen{background:var(--fill);color:var(--ink)}.schip.planned{background:#8fc1ff;color:#08223f}.schip.fixed,.schip.done{background:#3ddc84;color:#06281a}.schip.wontdo{background:rgba(245,239,227,.25);color:var(--ink)}
+.fb-kinds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.fb-kinds button{min-height:64px;border-radius:14px;border:1.5px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-weight:700;font-size:14px;color:var(--ink)}
+.fb-kinds button[aria-pressed="true"]{border:2px solid var(--gold);background:var(--gold-wash);font-weight:800}
+.fb-kinds button[data-k="problem"][aria-pressed="true"]{border-color:#ff8a7f;background:rgba(255,138,127,.14)}
+.fb-ta{min-height:150px;padding:14px;border-radius:16px;border:1px solid var(--line);background:var(--deep);color:var(--ink);font:500 16px/1.45 var(--body);resize:vertical;width:100%;box-sizing:border-box}
+.fb-ta:focus{border:2px solid var(--gold);outline:none}
+.fb-info{display:flex;gap:10px;padding:12px 14px;border-radius:14px;background:var(--fill);font-size:13px;line-height:1.45;color:var(--soft)}.fb-info b{color:var(--ink)}.fb-info svg{flex:none;margin-top:1px}
+.fb-steps{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.fb-steps li{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:700;color:var(--muted)}.fb-steps li i{height:4px;border-radius:99px;background:var(--fill)}
+.fb-steps li.on{color:var(--soft)}.fb-steps li.on i{background:var(--gold)}.fb-steps li.cur{color:var(--ink);font-weight:800}
+.fb-thread{display:flex;flex-direction:column;gap:10px}
+.bub{max-width:84%;padding:10px 14px;font-size:15px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
+.bub.me{align-self:flex-end;border-radius:18px 18px 4px 18px;background:var(--gold);color:var(--gold-ink);font-weight:600}
+.bub.them{align-self:flex-start;border-radius:18px 18px 18px 4px;background:#1c4260}
+.bub .by{display:block;margin-bottom:2px;font-size:12px;font-weight:800;color:var(--gold)}
+.bub-t{font-size:12px;color:var(--muted)}.bub-t.r{align-self:flex-end}
+.sysline{align-self:center;padding:4px 12px;border-radius:99px;background:var(--fill);font-size:12px;font-weight:700;color:var(--soft)}
+.fb-replyrow{display:flex;gap:8px}.fb-replyrow .inp{flex:1 1 0;min-width:0;font-size:16px}
+.toast.fbreply{pointer-events:auto;display:flex;align-items:center;gap:12px;text-align:left}.toast.fbreply .linkbtn{color:#14212c;font-weight:800;text-decoration:underline;min-height:32px}
+.tabn{display:inline-grid;place-items:center;min-width:20px;height:20px;padding:0 5px;margin-left:6px;box-sizing:border-box;border-radius:99px;background:#ff6b5e;color:#2b0d0a;font-size:12px;font-weight:800;vertical-align:1px}
+.tabn[hidden]{display:none}
+.adm-tabs button{display:flex;align-items:center;justify-content:center}
+.adm-ifilt{display:flex;flex-wrap:wrap;gap:6px}
+.adm-ifilt button{min-height:36px;padding:0 12px;border-radius:99px;border:1px solid var(--line);font-size:13px;font-weight:700;color:var(--soft)}
+.adm-ifilt button[aria-pressed="true"]{background:var(--ink);color:var(--felt);border-color:transparent;font-weight:800}
+.adm-inbox{display:flex;flex-direction:column;gap:8px}
+.adm-inbox .fb-item{background:#16374f}.adm-inbox .fb-item.todo{border:1.5px solid var(--gold-edge)}
+.adm-inbox .fb-item .newb{margin-left:auto;padding:2px 8px;border-radius:99px;background:#ff6b5e;color:#2b0d0a;font-size:11px;font-weight:800}
+.adm-thread{max-height:92vh;overflow-y:auto}
+.at-head{display:flex;align-items:center;gap:12px;padding-right:44px}.at-head .t{display:flex;flex-direction:column;gap:2px}.at-head b{font-size:17px}.at-head span{font-size:13px;color:var(--muted)}
+.at-stat{display:flex;flex-wrap:wrap;gap:6px}
+.at-stat button{min-height:38px;padding:0 14px;border-radius:99px;border:1px solid var(--line);font-size:14px;font-weight:700;color:var(--soft)}
+.at-stat button[aria-pressed="true"][data-st="planned"]{background:#8fc1ff;color:#08223f;border-color:transparent}
+.at-stat button[aria-pressed="true"][data-st="fixed"]{background:#3ddc84;color:#06281a;border-color:transparent}
+.at-stat button[aria-pressed="true"][data-st="seen"],.at-stat button[aria-pressed="true"][data-st="wontdo"]{background:var(--ink);color:var(--felt);border-color:transparent}
+.at-quick{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}.at-quick::-webkit-scrollbar{display:none}
+.at-quick button{flex:none;min-height:34px;padding:0 12px;border-radius:99px;border:1px solid var(--line);background:var(--fill);font-size:13px;font-weight:600;color:var(--ink)}
+@media (min-width:1024px){.adm-side [data-sec=inbox] .adm-inbox{max-height:520px;overflow:auto}}
 .fxl{position:fixed;z-index:45;pointer-events:none;display:grid;place-items:center}
 .fx-shock{border-radius:50%;border:5px solid var(--gold);box-sizing:border-box}
 .fx-wash{border-radius:50%;background:radial-gradient(circle,var(--wc) 0%,var(--wc) 35%,transparent 70%)}
@@ -715,6 +769,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
       <a class="logo" href="/">Last <span>Card</span></a>
       <nav aria-label="Main"><a href="#leaderboard">Leaderboard</a><a href="#" data-howto="1">How to play</a></nav>
       <button class="iconbtn" id="adminBtn" aria-label="Admin" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></button>
+      <button class="fbpill" id="fbBtn" type="button" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span>Feedback</span><i class="dot" id="fbDot" hidden aria-label="New reply"></i></button>
       <button class="acct" id="acctBtn"></button>
     </header>
     <main class="home-grid">
@@ -784,17 +839,25 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
     </div>
     <section aria-label="Right now"><h2 class="adm-h">Right now</h2><div class="adm-cards" id="admCards"></div></section>
     <div class="adm-tabs" role="tablist" aria-label="Admin sections">
-      <button role="tab" data-tab="tables" aria-selected="true">Tables</button><button role="tab" data-tab="chat" aria-selected="false">Chat</button><button role="tab" data-tab="usage" aria-selected="false">Usage</button><button role="tab" data-tab="server" aria-selected="false">Server</button>
+      <button role="tab" data-tab="tables" aria-selected="true">Tables</button><button role="tab" data-tab="inbox" aria-selected="false">Inbox<span class="tabn" id="admTabN" hidden></span></button><button role="tab" data-tab="chat" aria-selected="false">Chat</button><button role="tab" data-tab="usage" aria-selected="false">Usage</button>
     </div>
     <div class="adm-body">
       <section class="adm-sec on" data-sec="tables" aria-labelledby="admTT"><div class="adm-sh"><h2 id="admTT">Tables</h2><span class="note" id="admTN"></span></div><div id="admTables"></div></section>
       <aside class="adm-side">
+        <section class="adm-sec adm-box" data-sec="inbox" aria-labelledby="admIT"><div class="adm-sh"><h2 id="admIT">Inbox</h2><span class="note" id="admIN"></span></div><div class="pills adm-ifilt" id="admIFilt" role="group" aria-label="Show"></div><div id="admInbox" class="adm-inbox"></div></section>
         <section class="adm-sec adm-box" data-sec="chat" aria-labelledby="admCT"><div class="adm-sh"><h2 id="admCT">Chat</h2><span class="note">every table, last 14 days</span></div><ul class="adm-chat" id="admChat"></ul></section>
         <section class="adm-sec adm-box" data-sec="usage" aria-labelledby="admUT"><h2 id="admUT">Usage</h2><div id="admUsage"></div></section>
         <section class="adm-sec adm-box" data-sec="usage" aria-labelledby="admTopT"><h2 id="admTopT">Top this week</h2><ol class="adm-top" id="admTop"></ol></section>
-        <section class="adm-sec adm-box quiet" data-sec="server" aria-labelledby="admST"><h2 id="admST">Server</h2><div id="admServer"></div></section>
+        <section class="adm-sec adm-box quiet" data-sec="usage" aria-labelledby="admST"><h2 id="admST">Server</h2><div id="admServer"></div></section>
       </aside>
     </div>
+  </div>
+</div>
+
+<div id="feedback" class="screen" hidden>
+  <div class="wrap fbwrap">
+    <div class="board-head"><button class="iconbtn" id="fbBack" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button><h1 id="fbTitle">Feedback</h1><span id="fbHeadChip"></span></div>
+    <div id="fbBody"></div>
   </div>
 </div>
 
@@ -819,7 +882,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 <div id="game" class="screen" hidden>
   <header class="tbar">
     <button class="iconbtn" id="gAdmBack" aria-label="Back to admin" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
-    <button class="iconbtn" id="menuBtn" aria-label="Table menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <button class="iconbtn" id="menuBtn" aria-label="Table menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><i class="dot" id="menuBtnDot" hidden></i></button>
     <span class="ttl"><b id="gCode">----</b><span id="gSub"></span></span>
     <span class="adm-tag" id="gAdmTag" hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10 10 0 0 1 12 19c-6.4 0-10-7-10-7a18 18 0 0 1 4.1-5M9.9 5.2A9 9 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-2.2 3.2M2 2l20 20"/></svg>Hidden</span>
     <button class="watchbtn" id="watchBtn" aria-expanded="false" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span id="watchN">0</span></button>
@@ -897,9 +960,10 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <button class="btn" data-howto="1">How to play</button>
       <button class="btn" id="menuBoard">Leaderboard</button>
+      <button class="btn" id="menuFb" style="position:relative"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg> Feedback<i class="dot" id="menuFbDot" hidden aria-label="New reply"></i></button>
       <button class="btn" id="menuHome">Back to home</button>
-      <button class="btn danger-line" id="menuLeave">Leave table</button>
     </div>
+    <button class="btn danger-line block" id="menuLeave" style="min-height:50px">Leave table</button>
     <p class="note" id="menuHomeNote">Back to home keeps your seat. Leave table gives it up.</p>
     <button class="btn danger block" id="menuEnd" hidden>End game for everyone</button>
     <p class="note" id="menuEndNote" hidden></p>
@@ -925,6 +989,11 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 <!-- start a table while someone's invite is waiting -->
 <div class="sheet" id="startSheet" hidden>
   <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="ssT" id="startCard"></div>
+</div>
+
+<!-- admin: one feedback thread -->
+<div class="sheet" id="admThread" hidden>
+  <div class="sheet-card adm-thread" role="dialog" aria-modal="true" aria-labelledby="atT" id="admThreadCard"></div>
 </div>
 
 <!-- leaving the table -->

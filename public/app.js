@@ -20,6 +20,7 @@ if (!/^[a-zA-Z0-9]{16,64}$/.test(token)) { token = Array.from(crypto.getRandomVa
 let session = load('lc-session'), me = null, build = null, last = null, ready = false;
 
 /* ---------- view state ---------- */
+let fbItems = [], fbUnread = 0, fbFrom = 'home', fbView = 'list', fbOpenId = null, fbKind = 'idea', fbDraft = '', fbQueued = null; // feedback
 let idleTimer = null, idleAt = 0; // idle-close countdown
 let admData = null, admTimer = null, admTab = 'tables', adminWatching = null; // admin (see below)
 let view = 'home', curCode = null, G = null, boardFrom = 'home', boardGame = 'all', boardPeriod = 'week';
@@ -105,7 +106,7 @@ function toast(msg, kind, html) {
   if (html) el.innerHTML = html; else el.textContent = msg;
   const box = $('#toasts'); box.appendChild(el);
   while (box.children.length > (view === 'game' ? 2 : 3)) box.firstChild.remove();
-  setTimeout(() => el.remove(), kind === 'admalert' ? 9000 : kind === 'win' ? 4200 : kind === 'chat' ? 4000 : 2800);
+  setTimeout(() => el.remove(), kind === 'admalert' || kind === 'fbreply' ? 9000 : kind === 'win' ? 4200 : kind === 'chat' ? 4000 : 2800);
 }
 function cardHTML(c, o) {
   o = o || {};
@@ -131,7 +132,7 @@ function send(ev, data, quiet) {
 }
 
 /* ---------- screens + routing ---------- */
-const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet', 'joinSheet', 'startSheet'];
+const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet', 'joinSheet', 'startSheet', 'admThread'];
 function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#' + id).hidden = true; $('#reactPop').hidden = true; }
 function show(v) {
   if (v !== 'game' && practice) endPractice();
@@ -140,7 +141,7 @@ function show(v) {
   if (v !== 'admin') clearTimeout(admTimer);
   view = v;
   document.body.classList.toggle('in-game', v === 'game');
-  for (const id of ['home', 'invite', 'board', 'game', 'admin']) $('#' + id).hidden = id !== v;
+  for (const id of ['home', 'invite', 'board', 'game', 'admin', 'feedback']) $('#' + id).hidden = id !== v;
   if (v !== 'game') { closeSheets('signin'); $('#chat').classList.remove('open'); }
   window.scrollTo(0, 0);
 }
@@ -152,6 +153,7 @@ function route() {
   if (code) openTable(code);
   else if (location.hash === '#leaderboard') showBoard(view === 'game' ? 'game' : 'home');
   else if (location.hash === '#admin' && me && me.admin) showAdmin();
+  else if (location.hash === '#feedback' && me) showFeedback('home');
   else showHome();
 }
 window.addEventListener('hashchange', route);
@@ -301,7 +303,7 @@ $('#siForm').addEventListener('submit', async (e) => {
     return;
   }
   me = { name: r.name, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
-  rememberName(r.name); resetAuth();
+  rememberName(r.name); resetAuth(); loadFb();
   $('#signin').hidden = true;
   toast(r.created ? `Welcome, ${r.name}! Remember your PIN to keep your wins.` : r.newPin ? `New PIN saved. Welcome back, ${r.name}!` : `Signed in as ${r.name}`);
   const then = afterSignIn; afterSignIn = null;
@@ -326,7 +328,7 @@ socket.on('connect', async () => {
   ready = true; $('#homeNote').textContent = '';
   if (view === 'game' && curCode && !hashCode() && !practice && !adminWatching) setHash(curCode);
   setOffline(false);
-  syncPush();
+  syncPush(); loadFb();
   if (adminWatching && me && me.admin) adminWatch(adminWatching);
   else if (!practice) route();
 });
@@ -408,6 +410,7 @@ function showHome() {
   else { ab.className = 'acct out'; ab.textContent = 'Sign in'; ab.removeAttribute('aria-label'); }
   $('#greet').textContent = me ? `Ready for a round, ${me.name}?` : 'Ready for a round?';
   $('#adminBtn').hidden = !(me && me.admin);
+  paintFbDots();
   $('#homeErr').textContent = '';
   // signed out: the sign-in form sits right on the page instead of hiding behind a header button
   const authBox = $('#homeAuth');
@@ -1445,6 +1448,136 @@ function overHTML() {
 }
 
 
+/* ---------- feedback: ideas and problems, answered by the admin ---------- */
+const FB_ICON = {
+  idea: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1V17h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg>',
+  problem: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>',
+  other: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
+};
+const FB_KIND = { idea: 'Idea', problem: 'Problem', other: 'Other', pin: 'PIN reset' };
+const FB_STAT = { new: 'Sent', seen: 'Seen', planned: 'Planned', fixed: 'Fixed', wontdo: 'Not planned', done: 'Done' };
+const kchip = (k) => `<span class="kchip ${k}">${FB_KIND[k] || 'Other'}</span>`;
+const schip = (s) => `<span class="schip ${s}">${FB_STAT[s] || s}</span>`;
+function whenText(t) {
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return 'just now'; if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
+  return daysAgo(t);
+}
+function paintFbDots() {
+  const on = fbUnread > 0;
+  $('#fbBtn').hidden = !me; $('#fbDot').hidden = !on; $('#menuFbDot').hidden = !on;
+  const md = $('#menuBtnDot'); if (md) md.hidden = !on;
+  $('#fbBtn').setAttribute('aria-label', on ? `Feedback, ${fbUnread} new repl${fbUnread === 1 ? 'y' : 'ies'}` : 'Feedback');
+}
+async function loadFb() {
+  if (!me) { fbItems = []; fbUnread = 0; paintFbDots(); return; }
+  const r = await send('fbMine', {}, true);
+  if (!r.ok) return;
+  fbItems = r.items; fbUnread = r.unread; paintFbDots();
+  if (view === 'feedback') renderFb();
+}
+function showFeedback(from, openId) {
+  needSignIn(() => {
+    fbFrom = from || (view === 'game' ? 'game' : 'home');
+    closeSheets(); show('feedback');
+    if (fbFrom === 'home') setHash('feedback');
+    fbView = openId ? 'thread' : 'list'; fbOpenId = openId || null;
+    renderFb(); loadFb();
+  });
+}
+$('#fbBtn').onclick = () => showFeedback('home');
+$('#menuFb').onclick = () => showFeedback('game');
+$('#fbBack').onclick = () => {
+  if (fbView !== 'list') { fbView = 'list'; fbOpenId = null; renderFb(); return; }
+  if (fbFrom === 'game' && curCode) { show('game'); setHash(curCode); render(); } else showHome();
+};
+function renderFb() {
+  const body = $('#fbBody'), chip = $('#fbHeadChip'); chip.innerHTML = '';
+  if (fbView === 'compose') {
+    $('#fbTitle').textContent = 'New message';
+    const here = curCode && fbFrom === 'game' ? curCode : null;
+    body.innerHTML = `<form id="fbForm" style="display:flex;flex-direction:column;gap:16px">
+      <fieldset style="margin:0;padding:0;border:0;display:flex;flex-direction:column;gap:8px"><legend class="fb-h" style="margin-bottom:8px">What is it?</legend>
+        <div class="fb-kinds">${['idea', 'problem', 'other'].map((k) => `<button type="button" data-k="${k}" aria-pressed="${k === fbKind}">${FB_ICON[k]}${FB_KIND[k]}</button>`).join('')}</div></fieldset>
+      <label class="fld" for="fbText">${fbKind === 'problem' ? 'What happened?' : fbKind === 'idea' ? 'Your idea' : 'Your message'}
+        <textarea id="fbText" class="fb-ta" maxlength="1000" placeholder="${fbKind === 'problem' ? 'What were you doing just before?' : fbKind === 'idea' ? 'What would make Last Card better?' : 'Anything at all'}">${esc(fbDraft)}</textarea></label>
+      <span class="note" id="fbCount" style="margin-top:-8px">${fbDraft.length} / 1000</span>
+      <div class="fb-info"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg><span>Sent as <b>${esc(me ? me.name : '')}</b>${here ? `, with table <b>${esc(here)}</b>` : ''} and your device type, so the admin can look into it. Only the admin sees this.</span></div>
+      <p class="err" id="fbErr" role="alert"></p>
+      <button class="btn gold block" type="submit" style="min-height:56px;font-size:17px">Send to admin</button>
+    </form>`;
+    return;
+  }
+  if (fbView === 'thread') {
+    const t = fbItems.find((x) => x.id === fbOpenId);
+    if (!t) { $('#fbTitle').textContent = 'Feedback'; body.innerHTML = '<p class="note">Loading…</p>'; return; }
+    $('#fbTitle').textContent = 'Your ' + (t.kind === 'pin' ? 'PIN reset' : (FB_KIND[t.kind] || 'message').toLowerCase());
+    chip.innerHTML = schip(t.status);
+    const order = ['new', 'seen', t.status === 'wontdo' ? 'wontdo' : 'planned', t.status === 'wontdo' ? '' : 'fixed'];
+    const idx = { new: 0, seen: 1, planned: 2, wontdo: 2, fixed: 3, done: 3 }[t.status] || 0;
+    const steps = t.kind === 'pin' ? '' : `<ol class="fb-steps" aria-label="Progress">${['Sent', 'Seen', t.status === 'wontdo' ? 'Not planned' : 'Planned', 'Fixed'].map((l, i) => `<li class="${i <= idx ? 'on' : ''} ${i === idx ? 'cur' : ''}" ${i === idx ? 'aria-current="step"' : ''}><i></i>${l}</li>`).join('')}</ol>`;
+    const msgs = t.msgs.map((m, i) => {
+      if (m.from === 'status') return `<p class="sysline">Marked as ${esc(FB_STAT[m.text] || m.text)} · ${whenText(m.at)}</p>`;
+      const mine = m.from === 'user';
+      return `<div class="bub ${mine ? 'me' : 'them'}">${mine ? '' : '<span class="by">Last Card admin</span>'}${esc(m.text)}</div><span class="bub-t ${mine ? 'r' : ''}">${whenText(m.at)}${i === 0 && t.code ? ' · table ' + esc(t.code) : ''}</span>`;
+    }).join('');
+    const seenLine = t.status !== 'new' && !t.msgs.some((m) => m.from === 'admin') ? '<p class="sysline">Seen by the admin</p>' : '';
+    body.innerHTML = `${steps}<div class="fb-thread">${msgs}${seenLine}</div>
+      <form class="fb-replyrow" id="fbReplyForm"><label class="sr" for="fbReply">Reply</label><input id="fbReply" class="inp" maxlength="1000" placeholder="Reply to the admin…" autocomplete="off"><button class="btn gold" type="submit">Send</button></form>`;
+    if (t.unread) { t.unread = false; fbUnread = Math.max(0, fbUnread - 1); paintFbDots(); send('fbRead', { id: t.id }, true); }
+    return;
+  }
+  $('#fbTitle').textContent = 'Feedback';
+  body.innerHTML = `<section class="fb-intro"><p>Got an idea, or something broke? The person who runs Last Card reads every message and answers here.</p>
+      <button class="btn gold block" id="fbNew" style="min-height:52px;font-size:16px">Write a message</button></section>
+    ${fbItems.length ? `<h2 class="fb-h">Your messages</h2>` + fbItems.map((t) => {
+      const lastAdmin = [...t.msgs].reverse().find((m) => m.from === 'admin');
+      const sub = t.unread ? `<span class="sub hot">Admin replied · ${whenText(lastAdmin ? lastAdmin.at : t.updated)}</span>` : lastAdmin ? `<span class="sub">Admin replied · ${whenText(lastAdmin.at)}</span>` : t.status === 'seen' ? '<span class="sub">Seen by the admin</span>' : `<span class="sub">Sent ${whenText(t.at)}</span>`;
+      return `<button class="fb-item ${t.unread ? 'unread' : ''}" data-fb="${t.id}"><span class="row">${kchip(t.kind)}${schip(t.status)}${t.unread ? '<span class="udot" aria-label="New reply"></span>' : ''}</span><b>${esc(t.msgs[0].text.length > 90 ? t.msgs[0].text.slice(0, 88) + '…' : t.msgs[0].text)}</b>${sub}</button>`;
+    }).join('') : '<p class="note" style="text-align:center">Nothing sent yet. Your messages and the admin’s answers show up here.</p>'}`;
+}
+$('#fbBody').addEventListener('click', (e) => {
+  if (e.target.closest('#fbNew')) { fbView = 'compose'; renderFb(); setTimeout(() => $('#fbText').focus(), 30); return; }
+  const it = e.target.closest('[data-fb]'); if (it) { fbView = 'thread'; fbOpenId = it.dataset.fb; renderFb(); window.scrollTo(0, 0); return; }
+  const k = e.target.closest('[data-k]'); if (k) { fbDraft = $('#fbText').value; fbKind = k.dataset.k; renderFb(); $('#fbText').focus(); }
+});
+$('#fbBody').addEventListener('input', (e) => { if (e.target.id === 'fbText') { fbDraft = e.target.value; $('#fbCount').textContent = fbDraft.length + ' / 1000'; } });
+$('#fbBody').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (e.target.id === 'fbForm') {
+    const text = $('#fbText').value.trim();
+    if (text.length < 2) { $('#fbErr').textContent = 'Write a few words first.'; return; }
+    const b = e.target.querySelector('[type=submit]'); b.disabled = true;
+    const r = await send('fbSend', { kind: fbKind, text }, true);
+    b.disabled = false;
+    if (!r.ok) { $('#fbErr').textContent = r.error || 'Couldn’t send. Try again.'; return; }
+    fbDraft = ''; fbItems.unshift(r.item); fbView = 'thread'; fbOpenId = r.item.id; renderFb();
+    toast('Sent. The admin gets it straight away.');
+  } else if (e.target.id === 'fbReplyForm') {
+    const inp = $('#fbReply'), text = inp.value.trim(); if (!text) return;
+    const r = await send('fbReply', { id: fbOpenId, text }, true);
+    if (!r.ok) { toast(r.error || 'Couldn’t send. Try again.'); return; }
+    fbItems = fbItems.map((x) => (x.id === r.item.id ? r.item : x)); renderFb();
+  }
+});
+// a reply or status change from the admin: a dot, and a pop-up (held back while it's your turn)
+socket.on('fbUpdate', (m) => {
+  if (!m) return;
+  loadFb();
+  if (!m.text) return;
+  fbQueued = m; flushFbToast();
+});
+function flushFbToast() {
+  if (!fbQueued) return;
+  const myTurnNow = view === 'game' && G && G.status === 'playing' && G.order[G.turn] === G.me;
+  if (myTurnNow || view === 'feedback') { if (view === 'feedback') fbQueued = null; else setTimeout(flushFbToast, 2500); return; }
+  const m = fbQueued; fbQueued = null;
+  Snd.play('chat');
+  toast('', 'fbreply', `<span><b>The admin replied</b><br>“${esc(m.text.length > 60 ? m.text.slice(0, 58) + '…' : m.text)}”</span><button class="linkbtn" data-fbopen="${esc(m.id)}">Read</button>`);
+}
+$('#toasts').addEventListener('click', (e) => { const b = e.target.closest('[data-fbopen]'); if (b) { b.closest('.toast').remove(); showFeedback(view === 'game' ? 'game' : 'home', b.dataset.fbopen); } });
+
 /* ---------- admin ----------
    Only accounts named in ADMIN_NAMES on the server get this. Watching is silent: the server keeps
    admins out of the table's room and player list, and sends them the same view a watcher gets. */
@@ -1529,6 +1662,7 @@ function renderAdmin() {
   }).join('') : '<li class="note">No messages yet. Table chat shows up here as people talk.</li>';
   admSetTab(admTab);
   admAlertsUI(d.alerts || 'start');
+  paintAdmTodo(d.fbTodo || 0);
 }
 function admAlertsUI(v) {
   $$('.adm-alerts [data-alert]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.alert === v)));
@@ -1562,6 +1696,112 @@ $('#toasts').addEventListener('click', (e) => {
 // words that usually mean someone hit a problem or wants something, so those messages stand out
 const FEEDBACK = /\b(bug|bugs|broken|issue|problem|error|crash\w*|stuck|frozen|freez\w*|lag\w*|glitch\w*|not working|doesn'?t work|isn'?t working|can'?t|cannot|won'?t|feature|add|wish|should|please|pls|option|setting|why)\b/i;
 $('#admChat').addEventListener('click', (e) => { const b = e.target.closest('[data-watch]'); if (b) adminWatch(b.dataset.watch); });
+
+// ---------- admin inbox: feedback threads, replies, statuses, PIN resets ----------
+let admFb = [], admFbFilter = 'needs', admFbTodo = -1, admFbOpenId = null, admFbStatus = null;
+const needsReply = (t) => t.adminUnread || (t.kind === 'pin' ? t.status === 'new' : ['new', 'seen'].includes(t.status) && t.msgs[t.msgs.length - 1].from === 'user');
+async function loadAdmFb() {
+  const r = await send('adminFb', {}, true);
+  if (!r.ok) return;
+  admFb = r.items; renderAdmInbox();
+  if (admFbOpenId && !$('#admThread').hidden) renderAdmThread(admFb.find((x) => x.id === admFbOpenId));
+}
+function paintAdmTodo(n) {
+  const b = $('#admTabN'); b.hidden = !n; b.textContent = n;
+  $('#admIN').textContent = n ? `${n} need${n === 1 ? 's' : ''} you` : '';
+  if (n !== admFbTodo) { const first = admFbTodo < 0; admFbTodo = n; if (!first || !admFb.length) loadAdmFb(); }
+}
+function renderAdmInbox() {
+  const F = { needs: ['Needs reply', needsReply], planned: ['Planned', (t) => t.status === 'planned'], fixed: ['Fixed', (t) => t.status === 'fixed' || t.status === 'done'], all: ['All', () => true] };
+  $('#admIFilt').innerHTML = Object.entries(F).map(([k, [l, f]]) => `<button type="button" data-ff="${k}" aria-pressed="${k === admFbFilter}">${l} · ${admFb.filter(f).length}</button>`).join('');
+  const list = admFb.filter(F[admFbFilter][1]);
+  $('#admInbox').innerHTML = list.length ? list.map((t) => `<button class="fb-item ${needsReply(t) ? 'todo' : ''}" data-fbadm="${t.id}">
+      <span class="row">${kchip(t.kind)}${avatarFor(t.name.toLowerCase(), t.name, { size: 'sm' })}<b style="font-size:14px">${esc(t.name)}</b><span class="sub">${whenText(t.updated)}${t.code ? ' · ' + esc(t.code) : ''}</span>${t.adminUnread ? '<span class="newb">New</span>' : `<span style="margin-left:auto">${schip(t.status)}</span>`}</span>
+      <span style="font-size:15px;line-height:1.45">${esc(t.msgs[t.msgs.length - 1].from === 'status' ? t.msgs[0].text : [...t.msgs].reverse().find((m) => m.from !== 'status').text)}</span>
+      ${t.msgs.length > 1 ? `<span class="sub">${t.msgs.filter((m) => m.from !== 'status').length} messages</span>` : ''}
+    </button>`).join('') : `<p class="adm-empty">${admFbFilter === 'needs' ? 'All caught up. New ideas and problems land here.' : 'Nothing here yet.'}</p>`;
+}
+$('#admIFilt').addEventListener('click', (e) => { const b = e.target.closest('[data-ff]'); if (b) { admFbFilter = b.dataset.ff; renderAdmInbox(); } });
+$('#admInbox').addEventListener('click', (e) => { const b = e.target.closest('[data-fbadm]'); if (b) openAdmThread(b.dataset.fbadm); });
+async function openAdmThread(id) {
+  admFbOpenId = id; admFbStatus = null;
+  const t0 = admFb.find((x) => x.id === id);
+  closeSheets(); $('#admThread').hidden = false;
+  $('#admThreadCard').innerHTML = '';
+  renderAdmThread(t0 || null);
+  const r = await send('adminFbOpen', { id }, true);
+  if (!r.ok) { $('#admThreadCard').innerHTML = `<p class="err">${esc(r.error || 'Couldn’t open that.')}</p>`; return; }
+  admFb = admFb.some((x) => x.id === id) ? admFb.map((x) => (x.id === id ? r.item : x)) : [r.item, ...admFb];
+  renderAdmInbox(); renderAdmThread(r.item);
+}
+function renderAdmThread(t) {
+  const card = $('#admThreadCard');
+  const draft = $('#atText') ? $('#atText').value : '', hadFocus = document.activeElement && document.activeElement.id === 'atText'; // keep what you were typing
+  if (!t) { card.innerHTML = '<span class="grab" aria-hidden="true"></span><p class="note">Loading…</p>'; return; }
+  const close = '<button class="iconbtn sheet-close" data-close="admThread" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+  const msgs = t.msgs.map((m) => m.from === 'status' ? `<p class="sysline">Marked as ${esc(FB_STAT[m.text] || m.text)} · ${whenText(m.at)}</p>`
+    : `<div class="bub ${m.from === 'admin' ? 'me' : 'them'}">${m.from === 'admin' ? '' : `<span class="by">${esc(t.name)}</span>`}${esc(m.text)}</div><span class="bub-t ${m.from === 'admin' ? 'r' : ''}">${whenText(m.at)}</span>`).join('');
+  const st = admFbStatus || t.status;
+  const meta = [FB_KIND[t.kind], t.code ? 'table ' + t.code : 'from home', t.device, whenText(t.at)].filter(Boolean).join(' · ');
+  let actions;
+  if (t.kind === 'pin') {
+    actions = t.status === 'new'
+      ? `<button class="btn gold block" id="atPin" style="min-height:54px">Allow ${esc(t.name)} a new PIN</button>
+         <p class="note" style="margin:0">The next sign-in as ${esc(t.name)} within a day picks a new PIN. Check it’s really them first, for example in your group chat.</p>`
+      : `<p class="note" style="margin:0">Done. ${esc(t.name)} can pick a new PIN when they next sign in (for a day).</p>`;
+  } else {
+    actions = `<div><p class="fb-h" style="margin:0 0 8px">Status ${esc(t.name)} sees</p><div class="at-stat" role="group" aria-label="Status">${['seen', 'planned', 'fixed', 'wontdo'].map((k) => `<button type="button" data-st="${k}" aria-pressed="${k === st}">${FB_STAT[k]}</button>`).join('')}</div></div>
+      <div class="at-quick" aria-label="Quick replies">${['Thanks, looking into it', 'Fixed now, give it another go', 'Good idea, it’s on the list', 'Thanks! Not planning this one for now'].map((q) => `<button type="button" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div>
+      <label class="sr" for="atText">Reply to ${esc(t.name)}</label>
+      <textarea id="atText" class="fb-ta" style="min-height:100px" maxlength="1000" placeholder="Reply to ${esc(t.name)}…"></textarea>
+      <p class="err" id="atErr" role="alert"></p>
+      <button class="btn gold block" id="atSend" style="min-height:54px">Send reply</button>
+      <p class="note" style="margin:0;text-align:center">${esc(t.name)} gets a pop-up, or a phone alert if the app is closed.</p>`;
+  }
+  card.innerHTML = `<span class="grab" aria-hidden="true"></span>${close}
+    <div class="at-head">${avatarFor(t.name.toLowerCase(), t.name)}<span class="t"><b id="atT">${esc(t.name)}</b><span>${esc(meta)}</span></span></div>
+    <div class="fb-thread">${msgs}</div>
+    ${t.open ? `<button class="btn block" id="atWatch" style="min-height:44px">Watch ${esc(t.code)} (still open)</button>` : ''}
+    ${actions}`;
+  const ta = $('#atText'); if (ta && draft) { ta.value = draft; if (hadFocus) ta.focus(); }
+  paintAtSend(t);
+}
+function paintAtSend(t) {
+  const b = $('#atSend'); if (!b) return;
+  const text = ($('#atText').value || '').trim(), st = admFbStatus && admFbStatus !== t.status ? admFbStatus : null;
+  b.textContent = text && st ? `Send reply and mark ${FB_STAT[st]}` : text ? 'Send reply' : st ? `Mark as ${FB_STAT[st]}` : 'Send reply';
+}
+$('#admThreadCard').addEventListener('click', async (e) => {
+  const t = admFb.find((x) => x.id === admFbOpenId); if (!t) return;
+  const s = e.target.closest('[data-st]'); if (s) { admFbStatus = s.dataset.st; $$('#admThreadCard [data-st]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.st === admFbStatus))); paintAtSend(t); return; }
+  const q = e.target.closest('[data-q]'); if (q) { const ta = $('#atText'); ta.value = q.dataset.q; if (/Fixed now/.test(q.dataset.q)) admFbStatus = 'fixed'; else if (/on the list/.test(q.dataset.q)) admFbStatus = 'planned'; else if (/Not planning/.test(q.dataset.q)) admFbStatus = 'wontdo'; $$('#admThreadCard [data-st]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.st === (admFbStatus || t.status)))); paintAtSend(t); ta.focus(); return; }
+  if (e.target.closest('#atWatch')) { closeSheets(); adminWatch(t.code); return; }
+  if (e.target.closest('#atPin')) { const r = await send('adminFbPin', { id: t.id }, true); if (r.ok) { admFb = admFb.map((x) => (x.id === t.id ? r.item : x)); renderAdmThread(r.item); renderAdmInbox(); toast(`${t.name} can pick a new PIN now`); } else toast(r.error || 'Couldn’t do that.'); return; }
+  if (e.target.closest('#atSend')) {
+    const text = $('#atText').value.trim(), st = admFbStatus && admFbStatus !== t.status ? admFbStatus : null;
+    if (!text && !st) { $('#atErr').textContent = 'Write a reply or pick a status.'; return; }
+    const b = $('#atSend'); b.disabled = true;
+    const r = await send('adminFbReply', { id: t.id, text, status: st || undefined }, true);
+    b.disabled = false;
+    if (!r.ok) { $('#atErr').textContent = r.error || 'Couldn’t send.'; return; }
+    admFb = admFb.map((x) => (x.id === t.id ? r.item : x)); admFbStatus = null;
+    renderAdmThread(r.item); renderAdmInbox(); toast(text ? `Sent to ${t.name}` : `Marked as ${FB_STAT[r.item.status]}`);
+  }
+});
+$('#admThreadCard').addEventListener('input', (e) => { if (e.target.id === 'atText') { const t = admFb.find((x) => x.id === admFbOpenId); if (t) paintAtSend(t); } });
+socket.on('adminFeedback', (m) => {
+  if (!m || !me || !me.admin) return;
+  Snd.play('chat');
+  toast('', 'admalert', `<span><b>${esc(m.head)}:</b> ${esc(m.text.length > 60 ? m.text.slice(0, 58) + '…' : m.text)}</span><button class="linkbtn" data-fbadmin="${esc(m.id)}">Open</button>`);
+  if (view === 'admin') loadAdmFb();
+});
+$('#toasts').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-fbadmin]'); if (!b) return;
+  b.closest('.toast').remove();
+  const id = b.dataset.fbadmin;
+  if (view !== 'admin') showAdmin();
+  admSetTab('inbox'); loadAdmFb().then(() => openAdmThread(id));
+});
 function admSetTab(tab) {
   admTab = tab;
   $$('.adm-tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
