@@ -233,6 +233,22 @@ async function setMeta(key, val) {
   if (r) await r.set(k, v); else mem.kv.set(k, v);
 }
 
+// ---------- recent table chat for the admin screen ----------
+// The last 300 messages from every table, kept 14 days, so admins can spot problems and feature asks
+// even after a table has closed.
+const CHAT_LOG = 'lc:chatlog', CHAT_LOG_MAX = 300, CHAT_LOG_DAYS = 14;
+const memChat = [];
+async function logChat(m) {
+  const v = JSON.stringify({ code: m.code, name: m.name, text: m.text, at: m.at });
+  if (r) { await r.lPush(CHAT_LOG, v); await r.lTrim(CHAT_LOG, 0, CHAT_LOG_MAX - 1); await r.expire(CHAT_LOG, CHAT_LOG_DAYS * 86400); }
+  else { memChat.unshift(v); memChat.length = Math.min(memChat.length, CHAT_LOG_MAX); }
+}
+async function chatLog(n = 80) {
+  const list = r ? await r.lRange(CHAT_LOG, 0, n - 1) : memChat.slice(0, n);
+  const cutoff = Date.now() - CHAT_LOG_DAYS * 86400e3;
+  return list.map((v) => { try { return JSON.parse(v); } catch (e) { return null; } }).filter((m) => m && m.at > cutoff);
+}
+
 // ---------- usage counters for the admin screen ----------
 // Counters per day (India time by default, STATS_TZ_MIN to change) (rounds, deals, signups, practice) plus a set of who played each day.
 const TZ_MIN = Number(process.env.STATS_TZ_MIN || 330);
@@ -273,4 +289,4 @@ async function stats() {
 const persistent = () => !!r;
 async function close() { if (r) { try { await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };
+module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };

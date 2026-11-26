@@ -534,6 +534,7 @@ io.on('connection', (socket) => {
       ok: true, now, tables: list,
       live: { playing: list.filter((x) => x.status === 'playing').length, lobby: list.filter((x) => x.status === 'lobby').length, over: list.filter((x) => x.status === 'over').length, online: online.size, atTables, watching, waiting },
       stats: st, top: top.map((x) => ({ name: x.name, wins: x.wins })), alerts: await adminPref(socket.data.account.key),
+      chat: await Accounts.chatLog(80).catch(() => []),
       server: { uptime: Math.round(process.uptime()), mem: process.memoryUsage().rss, build: BUILD, saved: !!kv, accounts: Accounts.persistent(), sockets: io.engine.clientsCount },
     });
   });
@@ -544,7 +545,7 @@ io.on('connection', (socket) => {
     unobserve();
     t.observers = t.observers || new Set(); t.observers.add(socket.id);
     socket.data.observing = t.code;
-    ack({ ok: true, code: t.code, view: Object.assign(viewFor(t, null), { admin: true }) });
+    ack({ ok: true, code: t.code, view: Object.assign(viewFor(t, null), { admin: true }), chat: (t.chat || []).slice(-60) });
   });
   on('adminUnwatch', (_, ack) => { unobserve(); ack({ ok: true }); });
   on('adminPref', async ({ alerts }, ack) => {
@@ -686,6 +687,8 @@ io.on('connection', (socket) => {
     c.t.chat = (c.t.chat || []).concat(m).slice(-CHAT_KEEP);
     c.t.lastActive = now;
     io.to(c.t.code).emit('chat', { ...m, code: c.t.code });
+    if (c.t.observers) for (const sid of c.t.observers) io.to(sid).emit('chat', { ...m, code: c.t.code });
+    Accounts.logChat({ ...m, code: c.t.code }).catch(() => {});
     markDirty(c.t);
     ack({ ok: true });
   });

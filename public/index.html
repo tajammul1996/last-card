@@ -528,7 +528,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .adm-card.hot{background:var(--gold-wash);border-color:var(--gold-edge)}
 .adm-card b{font-family:var(--display);font-weight:800;font-size:28px;line-height:1}
 .adm-card span{font-size:13px;font-weight:700}.adm-card small{font-size:12px;color:var(--muted)}
-.adm-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:4px;border-radius:14px;background:var(--deep)}
+.adm-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:4px;border-radius:14px;background:var(--deep)}
 .adm-tabs button{height:40px;border:0;border-radius:10px;background:transparent;color:var(--soft);font:700 14px var(--body)}
 .adm-tabs button[aria-selected="true"]{background:var(--ink);color:var(--felt);font-weight:800}
 .adm-body{display:flex;flex-direction:column;gap:16px}
@@ -561,7 +561,16 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .adm-bars small{font-size:11px;color:var(--muted)}.adm-bars b{font-size:11px;color:var(--soft)}
 .adm-top{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .adm-top li{display:flex;gap:10px;align-items:center;min-height:36px;font-size:14px}.adm-top .r{width:16px;font-weight:800;color:var(--muted)}.adm-top .n{flex:1;font-weight:700}
-.adminwatch #chatBtn,.adminwatch #reactBtn,.adminwatch #menuBtn{display:none}
+.adminwatch #reactBtn,.adminwatch #menuBtn,.adminwatch #quick,.adminwatch #chatForm{display:none}
+.adm-ro{display:none}.adminwatch .adm-ro{display:flex;align-items:center;gap:8px;margin:0;padding:12px 16px;border-top:1px solid var(--line-2);font-size:13px;color:var(--muted)}
+.adm-chat{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.adm-chat li{display:flex;flex-direction:column;gap:3px;padding:9px 10px;border-radius:12px}
+.adm-chat li.fb{background:var(--gold-wash);box-shadow:inset 3px 0 0 var(--gold)}
+.adm-chat .h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}.adm-chat .h b{font-size:13px;color:var(--ink)}
+.adm-chat .h .cd{padding:2px 8px;border-radius:99px;background:var(--fill);font-weight:800;letter-spacing:.08em;color:var(--soft);font-size:11px}
+.adm-chat .h button.cd{color:var(--gold);min-height:24px}
+.adm-chat .h .fbt{margin-left:auto;color:var(--gold);font-weight:800}
+.adm-chat .x{font-size:14px;line-height:1.4;overflow-wrap:anywhere}
 .adm-alerts{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:12px 14px;border-radius:16px;background:var(--panel);border:1px solid var(--line-2)}
 .adm-alerts .t{flex:1 1 200px;display:flex;flex-direction:column;gap:2px}.adm-alerts .t b{font-size:15px}.adm-alerts .t small{font-size:12px;color:var(--muted)}
 .adm-alerts .seg{flex:1 1 320px;grid-template-columns:repeat(3,1fr)}.adm-alerts .seg button{font-size:13px;padding:0 6px}
@@ -578,7 +587,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
   .adm-body{flex-direction:row;align-items:flex-start;gap:24px}
   .adm-body>[data-sec=tables]{flex:999 1 640px;min-width:0}.adm-side{flex:1 1 340px}
   .adm-sec{display:flex;flex-direction:column;gap:10px}
-  .adminwatch .chat{display:none}
+  .adm-chat{max-height:420px;overflow:auto}
 }
 .fxl{position:fixed;z-index:45;pointer-events:none;display:grid;place-items:center}
 .fx-shock{border-radius:50%;border:5px solid var(--gold);box-sizing:border-box}
@@ -732,11 +741,12 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
     </div>
     <section aria-label="Right now"><h2 class="adm-h">Right now</h2><div class="adm-cards" id="admCards"></div></section>
     <div class="adm-tabs" role="tablist" aria-label="Admin sections">
-      <button role="tab" data-tab="tables" aria-selected="true">Tables</button><button role="tab" data-tab="usage" aria-selected="false">Usage</button><button role="tab" data-tab="server" aria-selected="false">Server</button>
+      <button role="tab" data-tab="tables" aria-selected="true">Tables</button><button role="tab" data-tab="chat" aria-selected="false">Chat</button><button role="tab" data-tab="usage" aria-selected="false">Usage</button><button role="tab" data-tab="server" aria-selected="false">Server</button>
     </div>
     <div class="adm-body">
       <section class="adm-sec on" data-sec="tables" aria-labelledby="admTT"><div class="adm-sh"><h2 id="admTT">Tables</h2><span class="note" id="admTN"></span></div><div id="admTables"></div></section>
       <aside class="adm-side">
+        <section class="adm-sec adm-box" data-sec="chat" aria-labelledby="admCT"><div class="adm-sh"><h2 id="admCT">Chat</h2><span class="note">every table, last 14 days</span></div><ul class="adm-chat" id="admChat"></ul></section>
         <section class="adm-sec adm-box" data-sec="usage" aria-labelledby="admUT"><h2 id="admUT">Usage</h2><div id="admUsage"></div></section>
         <section class="adm-sec adm-box" data-sec="usage" aria-labelledby="admTopT"><h2 id="admTopT">Top this week</h2><ol class="adm-top" id="admTop"></ol></section>
         <section class="adm-sec adm-box quiet" data-sec="server" aria-labelledby="admST"><h2 id="admST">Server</h2><div id="admServer"></div></section>
@@ -781,6 +791,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
     <aside class="chat" id="chat" aria-labelledby="chatTitle">
       <div class="chat-head"><h2 id="chatTitle">Table chat</h2><button class="btn sm" id="chatClose">Close</button></div>
       <div class="msgs" id="msgs" aria-live="polite"></div>
+      <p class="adm-ro"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10 10 0 0 1 12 19c-6.4 0-10-7-10-7a18 18 0 0 1 4.1-5M9.9 5.2A9 9 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-2.2 3.2M2 2l20 20"/></svg>Read-only. Nobody here can see you.</p>
       <div class="quick" id="quick">
         <button data-q="Your turn! ⏰">Your turn! ⏰</button><button data-q="Nooo 😭">Nooo 😭</button><button data-q="Nice one 👏">Nice one 👏</button><button data-q="Hurry up 🐢">Hurry up 🐢</button><button data-q="GG 🎉">GG 🎉</button>
       </div>

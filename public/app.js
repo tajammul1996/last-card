@@ -640,7 +640,7 @@ function updateBadge() { refreshPeek(); const b = $('#chatBadge'); b.hidden = !u
 function chatName(m) { return playerOf(m.by) ? nameOf(m.by) : m.name || nameOf(m.by); }
 function renderChat() {
   const box = $('#msgs');
-  if (!chatMsgs.length) { box.innerHTML = '<p class="note" style="margin:auto 0 0">No messages yet. Say hi, or tap a quick reply below.</p>'; return; }
+  if (!chatMsgs.length) { box.innerHTML = `<p class="note" style="margin:auto 0 0">${adminWatching ? 'No messages at this table yet.' : 'No messages yet. Say hi, or tap a quick reply below.'}</p>`; return; }
   const mine = G && G.me;
   box.innerHTML = chatMsgs.map((m) => {
     if (m.sys) return `<div class="msg sys">${esc(m.text)}</div>`;
@@ -1313,6 +1313,12 @@ function renderAdmin() {
     : '<li class="note">No wins yet this week.</li>';
   const sv = d.server;
   $('#admServer').innerHTML = `<p>Up ${ago(sv.uptime * 1000)} · build ${esc(String(sv.build || '').slice(0, 10))}</p><p>Memory ${Math.round(sv.mem / 1048576)} MB · ${sv.sockets} connection${sv.sockets === 1 ? '' : 's'}</p><p>Tables ${sv.saved ? 'saved to Key Value' : 'in memory only'} · accounts ${sv.accounts ? 'saved' : 'in memory only'}</p>`;
+  const open = new Set(d.tables.map((t) => t.code));
+  $('#admChat').innerHTML = (d.chat || []).length ? d.chat.map((m) => {
+    const fb = FEEDBACK.test(m.text);
+    const cd = open.has(m.code) ? `<button class="cd" data-watch="${esc(m.code)}" aria-label="Watch table ${esc(m.code)}">${esc(m.code)}</button>` : `<span class="cd">${esc(m.code)}</span>`;
+    return `<li class="${fb ? 'fb' : ''}"><span class="h">${cd}<b>${esc(m.name)}</b><span>${ago(d.now - m.at)} ago</span>${fb ? '<span class="fbt">Might be feedback</span>' : ''}</span><span class="x">${esc(m.text)}</span></li>`;
+  }).join('') : '<li class="note">No messages yet. Table chat shows up here as people talk.</li>';
   admSetTab(admTab);
   admAlertsUI(d.alerts || 'start');
 }
@@ -1345,6 +1351,9 @@ $('#toasts').addEventListener('click', (e) => {
   else if (curCode && curCode !== adminWatching) send('away', {}, true);
   adminWatch(b.dataset.admWatch);
 });
+// words that usually mean someone hit a problem or wants something, so those messages stand out
+const FEEDBACK = /\b(bug|bugs|broken|issue|problem|error|crash\w*|stuck|frozen|freez\w*|lag\w*|glitch\w*|not working|doesn'?t work|isn'?t working|can'?t|cannot|won'?t|feature|add|wish|should|please|pls|option|setting|why)\b/i;
+$('#admChat').addEventListener('click', (e) => { const b = e.target.closest('[data-watch]'); if (b) adminWatch(b.dataset.watch); });
 function admSetTab(tab) {
   admTab = tab;
   $$('.adm-tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
@@ -1366,6 +1375,7 @@ async function adminWatch(code) {
   document.body.classList.add('adminwatch'); $('#gAdmBack').hidden = false; $('#gAdmTag').hidden = false;
   $('#gCode').textContent = r.code;
   onState(r.view);
+  chatMsgs = Array.isArray(r.chat) ? r.chat.slice(-60) : []; renderChat();
 }
 function adminLeave() {
   if (!adminWatching) return;

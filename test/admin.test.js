@@ -64,9 +64,15 @@ function phone(name) {
   assert(ana.state.players.length === 2, 'players never see the admin');
   assert(!(await boss.call('draw')).ok, 'admin cannot play');
   await ana.call('chat', { text: 'hi' }); await sleep(50);
-  assert(!boss.ev.some(([e]) => e === 'chat'), 'admin is not in the chat room');
+  const got = boss.ev.find(([e]) => e === 'chat');
+  assert(got && got[1].text === 'hi' && got[1].code === code && got[1].name === 'Ana', 'watching admin reads table chat');
+  assert(ana.state.players.length === 2, 'reading chat stays invisible');
+  const rw = await boss.call('adminWatch', { code });
+  assert(rw.chat.some((m) => m.text === 'hi'), 'chat history comes with watching');
+  assert(!(await boss.call('chat', { text: 'hello' })).ok, 'admin cannot post');
   const o2 = await boss.call('adminOverview');
   assert(o2.tables[0].observers === 1, 'overview knows someone is watching');
+  assert(o2.chat.length >= 1 && o2.chat[0].text === 'hi' && o2.chat[0].code === code, 'overview has recent chat from every table');
 
   // stop watching, then the table closing tells a watching admin
   await boss.call('adminUnwatch');
