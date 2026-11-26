@@ -607,6 +607,27 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .lv-opt .tx{display:flex;flex-direction:column;gap:4px}.lv-opt b{font-size:16px}.lv-opt .tx span{font-size:14px;line-height:1.4;color:var(--soft)}
 .lv-opt.out{background:rgba(255,138,127,.08);border-color:rgba(255,138,127,.55)}.lv-opt.out .ic{background:rgba(255,138,127,.16);color:#ff8a7f}.lv-opt.out b{color:#ffb4ad}
 .btn.leave-red{background:#ff8a7f;color:#2b0d0a;border-color:transparent}
+.newgame2{display:flex;flex-direction:column;gap:10px}
+.ng-h{margin:4px 0 0;font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-family:var(--body)}
+.ng-tile{display:flex;align-items:center;gap:14px;min-height:76px;padding:12px 14px;border-radius:18px;background:var(--panel);border:1px solid var(--line);text-align:left;color:var(--ink);width:100%}
+.ng-tile .ic{width:44px;height:44px;flex:none;border-radius:14px;background:var(--fill);display:grid;place-items:center}
+.ng-tile .tx{flex:1;display:flex;flex-direction:column;gap:3px}.ng-tile b{font-size:16px}.ng-tile .tx span{font-size:13px;color:var(--muted)}
+.ng-tile .ng-chev{color:var(--muted);flex:none}
+.ng-tile:hover{border-color:var(--gold-edge)}
+.ng-tile:disabled{opacity:.6}
+.inv2{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:22px;background:var(--gold-wash);border:1.5px solid var(--gold);position:relative}
+.inv2 .eye{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--gold)}
+.inv2 .who{display:flex;align-items:center;gap:12px}.inv2 .who b{display:block;font-size:18px}.inv2 .who span{font-size:14px;color:var(--soft)}
+.inv2 .x{position:absolute;top:8px;right:8px;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:var(--soft)}
+.code-big{height:72px;text-align:center;font-family:var(--display);font-weight:800;font-size:34px;letter-spacing:.5em;padding-left:.5em;text-transform:uppercase}
+.code-big.ok{border-color:var(--gold);border-width:2px}.code-big.bad{border-color:#ff8a7f;border-width:2px}
+.js-found{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:16px;background:rgba(61,220,132,.1);border:1px solid rgba(61,220,132,.4)}
+.js-found .t{flex:1;display:flex;flex-direction:column;gap:2px}.js-found .t span{font-size:13px;color:var(--soft)}
+.js-miss{display:flex;gap:12px;padding:14px;border-radius:16px;background:rgba(255,138,127,.1);border:1px solid rgba(255,138,127,.45)}
+.js-miss svg{flex:none;color:#ff8a7f;margin-top:1px}.js-miss .t{display:flex;flex-direction:column;gap:4px}.js-miss .t span{font-size:14px;line-height:1.45;color:var(--soft)}
+.closed-card{display:flex;align-items:center;gap:12px;padding:14px;border-radius:18px;background:var(--panel);border:1px solid var(--line-2);text-align:left;width:100%;box-sizing:border-box}
+.closed-card .t{display:flex;flex-direction:column;gap:2px}.closed-card .t span{font-size:13px;color:var(--muted)}
+.closed-ic{width:88px;height:88px;border-radius:28px;background:var(--fill);border:1px solid var(--line);display:grid;place-items:center;color:var(--soft)}
 .fxl{position:fixed;z-index:45;pointer-events:none;display:grid;place-items:center}
 .fx-shock{border-radius:50%;border:5px solid var(--gold);box-sizing:border-box}
 .fx-wash{border-radius:50%;background:radial-gradient(circle,var(--wc) 0%,var(--wc) 35%,transparent 70%)}
@@ -699,7 +720,15 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
           <p class="note" style="margin-top:-6px">Pick a name and a PIN. They keep your wins on the leaderboard.</p>
           <div id="homeAuthSlot"></div>
         </section>
+        <div id="inviteBox"></div>
         <div id="rejoinBox"></div>
+        <section class="newgame2" id="newGameBox" aria-labelledby="ngh">
+          <h2 id="ngh" class="ng-h">Play with friends</h2>
+          <button class="ng-tile" id="joinOpen" type="button"><span class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg></span><span class="tx"><b>Join a friend’s table</b><span>They gave you a 4-letter code</span></span><svg class="ng-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+          <button class="ng-tile" id="createBtn" type="button"><span class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="tx"><b>Start a new table</b><span>You host, and get a link to send friends</span></span><svg class="ng-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+          <p class="err" id="homeErr" role="alert"></p>
+          <p class="note" id="homeNote">Connecting to the game server…</p>
+        </section>
         <button class="practice-row" id="practiceRow" type="button">
           <span class="pi"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9.5 16.5h5M2 13v3M22 13v3"/></svg></span>
           <span class="pt"><b>Practice vs computer</b><span>Any time, even offline · not on the leaderboard</span></span>
@@ -710,19 +739,6 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
           <span class="it"><b id="instT">Get the app</b><span>Full screen, on your home screen, opens in a tap.</span></span>
           <button class="btn light sm" id="installBtn" type="button">Install</button>
           <button class="install-x" id="installX" type="button" aria-label="Not now"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        </section>
-        <section class="card-box newgame" id="newGameBox" aria-labelledby="ngh">
-          <h2 id="ngh">New game</h2>
-          <div class="newgame-grid">
-            <button class="btn light block" id="createBtn" style="min-height:54px;font-size:17px">Start a table</button>
-            <form class="joinrow" id="joinForm" autocomplete="off">
-              <label class="sr" for="codeInp">Table code</label>
-              <input id="codeInp" class="inp code-inp" maxlength="4" placeholder="CODE" autocapitalize="characters">
-              <button class="btn" type="submit">Join</button>
-            </form>
-          </div>
-          <p class="err" id="homeErr" role="alert"></p>
-          <p class="note" id="homeNote">Connecting to the game server…</p>
         </section>
       </div>
       <aside class="home-side">
@@ -879,6 +895,27 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
     <button class="btn danger block" id="menuEnd" hidden>End game for everyone</button>
     <p class="note" id="menuEndNote" hidden></p>
   </div>
+</div>
+
+<!-- join a friend with a code -->
+<div class="sheet" id="joinSheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="jsT">
+    <span class="grab" aria-hidden="true"></span>
+    <button class="iconbtn sheet-close" data-close="joinSheet" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div><h2 id="jsT">Join a friend’s table</h2><p class="note" style="margin:4px 0 0">Type the 4-letter code from their screen. Got a link instead? Just open it.</p></div>
+    <form id="joinForm" autocomplete="off" style="display:flex;flex-direction:column;gap:12px">
+      <label class="fld" for="codeInp">Table code
+        <input id="codeInp" class="inp code-big" maxlength="4" placeholder="ABCD" autocapitalize="characters" autocomplete="off" spellcheck="false" enterkeyhint="go" aria-describedby="jsRes">
+      </label>
+      <div id="jsRes" role="status" aria-live="polite"></div>
+      <div id="jsAct"></div>
+    </form>
+  </div>
+</div>
+
+<!-- start a table while someone's invite is waiting -->
+<div class="sheet" id="startSheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="ssT" id="startCard"></div>
 </div>
 
 <!-- leaving the table -->

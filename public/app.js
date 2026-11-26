@@ -131,7 +131,7 @@ function send(ev, data, quiet) {
 }
 
 /* ---------- screens + routing ---------- */
-const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet'];
+const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet', 'joinSheet', 'startSheet'];
 function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#' + id).hidden = true; $('#reactPop').hidden = true; }
 function show(v) {
   if (v !== 'game' && practice) endPractice();
@@ -367,7 +367,7 @@ function showHome() {
     </section>`;
     $('#rejoinBtn').onclick = () => openTable(last.code);
   } else box.innerHTML = '';
-  $('#createBtn').className = 'btn block ' + (last && me ? 'light' : 'gold');
+  paintInvite();
   // offline: only practice is possible
   $('#offlineBox').hidden = !offline;
   $('#lbh').closest('section').hidden = offline;
@@ -443,27 +443,102 @@ async function loadHomeBoard() {
     : `<span>${me ? 'Finish a round to get on the board.' : 'Sign in and finish a round to get on the board.'}</span>`;
   $('#topList').innerHTML = top.length ? top.map((x) => `<li class="${x.me ? 'me' : ''}"><span class="rk">${x.rank}</span><span class="nm">${esc(x.name)}${x.me ? ' (you)' : ''}${x.online ? ONDOT : ''}</span><span class="w">${x.wins}</span></li>`).join('') : `<li><span class="nm" style="color:var(--muted)">No wins yet. ${me ? 'Finish a round to be first.' : 'Sign in and finish a round to be first.'}</span></li>`;
 }
-$('#createBtn').onclick = () => needSignIn(async () => {
+async function createTable() {
+  closeSheets();
   $('#createBtn').disabled = true;
   const r = await send('create', {}, true);
   $('#createBtn').disabled = false;
-  if (r.ok) enterGame(r.code); else $('#homeErr').textContent = r.error || 'Couldn’t start a table.';
+  if (r.ok) { clearInvite(); enterGame(r.code); } else $('#homeErr').textContent = r.error || 'Couldn’t start a table.';
+}
+// Starting a table while a friend's invite is waiting asks once, because people kept opening a table
+// of their own by mistake instead of joining the one they were invited to.
+$('#createBtn').onclick = () => needSignIn(() => {
+  const inv = invitePeek;
+  if (!inv) { createTable(); return; }
+  $('#startCard').innerHTML = `<span class="grab" aria-hidden="true"></span>
+    <div style="display:flex;align-items:center;gap:12px">${avatarFor(inv.host.toLowerCase(), inv.host)}<h2 id="ssT" style="margin:0">${esc(inv.host)} is waiting for you</h2></div>
+    <p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">${esc(inv.host)} invited you to table <b style="color:var(--ink)">${esc(inv.code)}</b>. A new table is a separate game, so you won’t be playing with them.</p>
+    <button class="btn gold block" id="ssJoin" style="min-height:54px">Join ${esc(inv.host)}’s table instead</button>
+    <button class="btn block" id="ssNew" style="min-height:54px">Start my own table</button>
+    <p class="note" style="text-align:center;margin:0">${esc(inv.host)}’s invite stays on your home screen while their table is open.</p>`;
+  closeSheets(); $('#startSheet').hidden = false;
+  $('#ssJoin').onclick = () => { closeSheets(); openTable(inv.code); };
+  $('#ssNew').onclick = createTable;
 });
-$('#codeInp').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, ''); });
+
+// join a friend's table by code, with a preview of whose table it is before you go in
+let jsSeq = 0, jsInfo = null;
+$('#joinOpen').onclick = () => {
+  closeSheets(); $('#codeInp').value = ''; $('#jsRes').innerHTML = ''; $('#jsAct').innerHTML = ''; $('#codeInp').className = 'inp code-big'; jsInfo = null;
+  $('#joinSheet').hidden = false; setTimeout(() => $('#codeInp').focus(), 50);
+};
+const MISS_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>';
+function closedLine(c) {
+  if (!c) return '';
+  const mins = Math.max(1, Math.round(c.ago / 60000)), when = mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+  return c.reason === 'idle' ? `It closed ${when} after nobody played for 10 minutes.` : `The game ended ${when}${c.winner ? `, and ${c.winner} won` : ''}.`;
+}
+async function jsCheck() {
+  const inp = $('#codeInp'); const code = inp.value;
+  jsInfo = null; $('#jsAct').innerHTML = ''; inp.className = 'inp code-big';
+  if (code.length < 4) { $('#jsRes').innerHTML = ''; return; }
+  const seq = ++jsSeq;
+  $('#jsRes').innerHTML = '<p class="note" style="margin:0">Looking for that table…</p>';
+  const r = await send('peek', { code }, true);
+  if (seq !== jsSeq) return;
+  if (!r.ok) { $('#jsRes').innerHTML = `<p class="err">${esc(r.error || 'Couldn’t check that code. Try again.')}</p>`; return; }
+  if (!r.exists) {
+    inp.className = 'inp code-big bad';
+    $('#jsRes').innerHTML = `<div class="js-miss">${MISS_ICON}<span class="t"><b>${r.closed ? `Table ${esc(code)} has closed` : `No open table called ${esc(code)}`}</b><span>${r.closed ? esc(closedLine(r.closed)) + ' Ask your friend for a new link.' : 'Check the letters with your friend. If their game ended, the table closed and they’ll need to send a new link.'}</span></span></div>`;
+    $('#jsAct').innerHTML = '<button type="button" class="btn block" id="jsNew" style="min-height:52px">Start a new table instead</button>';
+    $('#jsNew').onclick = () => needSignIn(createTable);
+    return;
+  }
+  const i = r.info; jsInfo = i;
+  inp.className = 'inp code-big ok';
+  const host = i.host || 'Someone';
+  const st = i.status === 'lobby' ? 'in the lobby' : i.status === 'playing' ? `round ${i.round} is on` : 'between rounds';
+  $('#jsRes').innerHTML = `<div class="js-found">${avatarFor(host.toLowerCase(), host)}<span class="t"><b>${esc(host)}’s table</b><span>${i.players.length} player${i.players.length === 1 ? '' : 's'} · ${st}${i.full ? ' · full' : ''}</span></span></div>`;
+  $('#jsAct').innerHTML = `<button type="submit" class="btn gold block" style="min-height:56px;font-size:17px" ${i.full ? 'disabled' : ''}>${i.full ? 'This table is full' : r.seated ? `Back to ${esc(host)}’s table` : `Join ${esc(host)}’s table`}</button>`;
+}
+$('#codeInp').addEventListener('input', (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); jsCheck(); });
 $('#joinForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  const c = $('#codeInp').value.trim();
-  if (c.length !== 4) { $('#homeErr').textContent = 'Enter the 4-letter table code.'; return; }
-  $('#homeErr').textContent = '';
-  openTable(c);
+  if (!jsInfo) { if ($('#codeInp').value.length < 4) $('#jsRes').innerHTML = '<p class="err">Enter all 4 letters of the code.</p>'; return; }
+  closeSheets(); openTable(jsInfo.code);
 });
+
+// ---------- an invite you haven't acted on yet stays on home ----------
+let invitePeek = null; // { code, host, players, status } while that table is open
+function rememberInvite(info) { if (info && info.host) store('lc-invite', JSON.stringify({ code: info.code, host: info.host, at: Date.now() })); }
+function clearInvite() { invitePeek = null; try { localStorage.removeItem('lc-invite'); } catch (e) {} const b = $('#inviteBox'); if (b) b.innerHTML = ''; }
+async function paintInvite() {
+  const box = $('#inviteBox');
+  let inv = null; try { inv = JSON.parse(load('lc-invite') || 'null'); } catch (e) {}
+  if (!inv || !me || offline || Date.now() - inv.at > 6 * 3600_000 || (last && last.code === inv.code)) { invitePeek = null; box.innerHTML = ''; return; }
+  const r = await send('peek', { code: inv.code }, true);
+  if (view !== 'home') return;
+  if (!r.ok || !r.exists || r.seated || r.info.full) { if (r.ok) clearInvite(); return; }
+  const i = r.info, host = i.host || inv.host;
+  invitePeek = { code: i.code, host };
+  const st = i.status === 'lobby' ? 'in the lobby' : i.status === 'playing' ? `round ${i.round} is on` : 'between rounds';
+  box.innerHTML = `<section class="inv2" aria-labelledby="ivT">
+    <span class="eye" id="ivT">You’re invited</span>
+    <button class="x" id="ivX" type="button" aria-label="Dismiss ${esc(host)}’s invite"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <div class="who">${avatarFor(host.toLowerCase(), host)}<div><b>${esc(host)} is waiting for you</b><span>Table ${esc(i.code)} · ${i.players.length} player${i.players.length === 1 ? '' : 's'} · ${st}</span></div></div>
+    <button class="btn gold block" id="ivJoin" style="min-height:52px;font-size:16px">Join ${esc(host)}’s table</button>
+  </section>`;
+  $('#ivJoin').onclick = () => openTable(i.code);
+  $('#ivX').onclick = clearInvite;
+  $('#createBtn').className = 'ng-tile';
+}
 
 /* ---------- invite (opened from a link) ---------- */
 let inviteInfo = null;
 async function openTable(code) {
   const r = await send('open', { code }, true);
   if (!r.ok) { showHome(); toast(r.error || 'Couldn’t open that table.'); return; }
-  if (!r.exists) { showInvite({ code, missing: true }); return; }
+  if (!r.exists) { showInvite({ code, missing: true, closed: r.closed }); return; }
   if (r.seated) { enterGame(code); return; }
   showInvite(r.info);
 }
@@ -472,10 +547,24 @@ function showInvite(info) {
   inviteInfo = info; show('invite'); setHash(info.code);
   const body = $('#inviteBody');
   if (info.missing) {
-    body.innerHTML = `<a class="logo" href="/" style="flex-grow:0">Last <span>Card</span></a>
-      <div class="inv-hero"><p class="eyebrow">Table ${esc(info.code)}</p><h1>This table isn’t open anymore</h1><p class="note" style="font-size:15px">Tables close a few hours after everyone leaves. Ask your friend for a fresh link, or start your own.</p></div>
-      <div class="inv-foot"><button class="btn gold block" id="invOwn">Start my own table</button></div>`;
-    $('#invOwn').onclick = () => showHome(); return;
+    // An old or mistyped link: say what happened, and always offer a way on.
+    const c = info.closed;
+    if ((load('lc-invite') || '').indexOf('"' + info.code + '"') >= 0) clearInvite();
+    body.innerHTML = `<button class="btn sm" id="invHome" style="align-self:flex-start">‹ Home</button>
+      <div class="inv-hero"><span class="closed-ic" aria-hidden="true"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M3 20h11V4H3zM10 12h.01"/></svg></span>
+        <h1>${c ? `Table ${esc(info.code)} has closed` : `No open table called ${esc(info.code)}`}</h1>
+        <p class="note" style="font-size:16px;line-height:1.5">${c ? esc(closedLine(c)) + ' Old links stop working once a table closes.' : 'The link may be old, or a letter may be off. Tables close once a game ends or nobody plays for 10 minutes.'}</p></div>
+      ${c && c.players.length ? `<div class="closed-card">${avatarFor((c.winner || c.players[0]).toLowerCase(), c.winner || c.players[0])}<span class="t"><b>${c.winner ? esc(c.winner) + ' won the game' : 'Nobody finished a round'}</b><span>${c.rounds} round${c.rounds === 1 ? '' : 's'} with ${esc(listNames(c.players.slice(0, 4)))}</span></span></div>` : ''}
+      <div class="inv-foot">
+        <button class="btn light block" id="invHome2" style="min-height:56px;font-size:17px">Go to home</button>
+        <button class="btn block" id="invNew" style="min-height:54px">Start a new table</button>
+        <button class="linkbtn" id="invCode" style="align-self:center;color:var(--soft)">Type a code instead</button>
+        <p class="note" style="text-align:center">Want to play with them again? Ask for a new link.</p>
+      </div>`;
+    $('#invHome').onclick = $('#invHome2').onclick = () => showHome();
+    $('#invNew').onclick = () => { showHome(); needSignIn(createTable); };
+    $('#invCode').onclick = () => { showHome(); $('#joinOpen').click(); };
+    return;
   }
   const host = info.host || 'Someone';
   const live = info.status === 'playing';
@@ -500,15 +589,16 @@ function showInvite(info) {
       <button class="btn gold block" id="invJoin" style="min-height:58px;font-size:18px" ${info.full ? 'disabled' : ''}>${esc(joinLabel)}</button>
       ${joinNote ? `<p class="note" style="text-align:center">${esc(joinNote)}</p>` : ''}
       <p class="err" id="invErr" role="alert"></p>
-      <button class="linkbtn" id="invOwn" style="align-self:center;color:var(--muted)">Start my own table instead</button>
+      <button class="linkbtn" id="invOwn" style="align-self:center;color:var(--soft)">Not now, go to home</button>
     </div>`;
+  rememberInvite(info);
   $('#invOwn').onclick = () => showHome();
   const sw = $('#invSwitch'); if (sw) sw.onclick = async () => { await switchUser(); };
   $('#invJoin').onclick = () => needSignIn(async () => {
     const btn = $('#invJoin'); if (btn) btn.disabled = true;
     const r = await send('join', { code: info.code }, true);
     if (btn) btn.disabled = false;
-    if (r.ok) enterGame(info.code);
+    if (r.ok) { clearInvite(); enterGame(info.code); }
     else if (r.waiting) showWaiting(info, r.host);
     else if (r.needLogin) { me = null; openSignIn(() => $('#invJoin').click()); }
     else if ($('#invErr')) $('#invErr').textContent = r.error || 'Couldn’t join. Try again.';

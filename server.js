@@ -423,7 +423,7 @@ io.on('connection', (socket) => {
   on('open', async ({ code }, ack) => {
     code = String(code || '').toUpperCase();
     const t = validCode(code) ? await freshTable(code) : null;
-    if (!t) return ack({ ok: true, exists: false, code });
+    if (!t) return ack({ ok: true, exists: false, code, closed: closedInfo(code) });
     const seat = findSeat(t);
     if (seat) {
       adoptSeat(t, seat);
@@ -431,6 +431,14 @@ io.on('connection', (socket) => {
       return ack({ ok: true, exists: true, seated: true, code });
     }
     ack({ ok: true, exists: true, seated: false, info: peek(t) });
+  });
+
+  // look at a table without sitting down (the join-by-code preview and the invite card on home)
+  on('peek', async ({ code }, ack) => {
+    code = String(code || '').toUpperCase();
+    const t = validCode(code) ? await freshTable(code) : null;
+    if (!t) return ack({ ok: true, exists: false, code, closed: closedInfo(code) });
+    ack({ ok: true, exists: true, seated: !!findSeat(t), info: peek(t) });
   });
 
   // stop getting updates from the current table but keep the seat
@@ -742,6 +750,13 @@ function closeTable(t, reason, by) {
   tellObservers(t);
   closedTables.set(t.code, { at: Date.now(), reason, by: by || null, rounds: msg.rounds, standings });
   tables.delete(t.code); markDirty(t);
+}
+
+// what an old link can say about a table that has closed
+function closedInfo(code) {
+  const x = closedTables.get(code); if (!x) return null;
+  const top = x.standings[0];
+  return { ago: Date.now() - x.at, reason: x.reason, rounds: x.rounds, winner: top && top.wins ? top.name : null, players: x.standings.map((p) => p.name) };
 }
 
 // ---------- closing stale tables ----------
