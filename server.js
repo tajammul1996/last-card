@@ -447,6 +447,7 @@ io.on('connection', (socket) => {
     t.players.set(id, p);
     attach(socket, t, p);
     ack({ ok: true, code: t.code });
+    alertAdmins('open', t, p.name).catch(() => {});
   });
 
   on('join', async ({ code }, ack) => {
@@ -532,7 +533,7 @@ io.on('connection', (socket) => {
     ack({
       ok: true, now, tables: list,
       live: { playing: list.filter((x) => x.status === 'playing').length, lobby: list.filter((x) => x.status === 'lobby').length, over: list.filter((x) => x.status === 'over').length, online: online.size, atTables, watching, waiting },
-      stats: st, top: top.map((x) => ({ name: x.name, wins: x.wins })),
+      stats: st, top: top.map((x) => ({ name: x.name, wins: x.wins })), alerts: await adminPref(socket.data.account.key),
       server: { uptime: Math.round(process.uptime()), mem: process.memoryUsage().rss, build: BUILD, saved: !!kv, accounts: Accounts.persistent(), sockets: io.engine.clientsCount },
     });
   });
@@ -546,6 +547,11 @@ io.on('connection', (socket) => {
     ack({ ok: true, code: t.code, view: Object.assign(viewFor(t, null), { admin: true }) });
   });
   on('adminUnwatch', (_, ack) => { unobserve(); ack({ ok: true }); });
+  on('adminPref', async ({ alerts }, ack) => {
+    if (!isAdmin(socket)) return ack({ ok: false, error: 'Not allowed.' });
+    if (ALERT_KINDS.includes(alerts)) await Accounts.setMeta('adminpref:' + socket.data.account.key, alerts);
+    ack({ ok: true, alerts: await adminPref(socket.data.account.key) });
+  });
   function unobserve() {
     const t = socket.data.observing && tables.get(socket.data.observing);
     if (t && t.observers) t.observers.delete(socket.id);
@@ -599,6 +605,7 @@ io.on('connection', (socket) => {
     const ok = act(c.t, (s) => { if (s.status === 'playing') return false; E.dealRound(s, seated); });
     if (ok) Accounts.bumpStat('deals').catch(() => {});
     ack({ ok });
+    if (ok && c.s.round === 1) alertAdmins('start', c.t).catch(() => {});
   });
   // the host can close the table at any time (anyone can when the host has gone offline):
   // everyone sees the standings and goes home
@@ -692,6 +699,26 @@ io.on('connection', (socket) => {
     if (c) { c.p.sockets.delete(socket.id); broadcast(c.t, false); }
   });
 });
+
+// ---------- admin alerts ----------
+// Each admin picks when to hear about new games: 'start' (a table deals its first round, the default),
+// 'open' (someone opens a table) or 'off'. With the app open they get a pop-up; otherwise a phone alert.
+const ALERT_KINDS = ['start', 'open', 'off'];
+async function adminPref(key) { const v = await Accounts.meta('adminpref:' + key).catch(() => null); return ALERT_KINDS.includes(v) ? v : 'start'; }
+function socketsOf(key) { return [...io.sockets.sockets.values()].filter((s) => s.connected && s.data.account && s.data.account.key === key); }
+async function alertAdmins(kind, t, by) {
+  if (!ADMINS.size) return;
+  const names = [...t.players.values()].map((p) => p.name);
+  const text = kind === 'open' ? `${by} opened table ${t.code}`
+    : `Game started at ${t.code}: ${names.length <= 3 ? names.join(', ') : names.slice(0, 2).join(', ') + ' and ' + (names.length - 2) + ' more'}`;
+  for (const key of ADMINS) {
+    if ([...t.players.values()].some((p) => p.account === key)) continue; // their own table
+    if ((await adminPref(key)) !== kind) continue;
+    const socks = socketsOf(key);
+    if (socks.length) for (const s of socks) s.emit('adminAlert', { code: t.code, kind, text });
+    else sendPush(key, { title: kind === 'open' ? 'New table' : 'New game', body: text, tag: 'lc-admin-' + t.code, url: '/#admin' });
+  }
+}
 
 // admins watching a table that closes go back to their dashboard
 function tellObservers(t) { if (t.observers) for (const sid of t.observers) io.to(sid).emit('adminEnded', { code: t.code }); }

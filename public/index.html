@@ -562,6 +562,10 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .adm-top{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .adm-top li{display:flex;gap:10px;align-items:center;min-height:36px;font-size:14px}.adm-top .r{width:16px;font-weight:800;color:var(--muted)}.adm-top .n{flex:1;font-weight:700}
 .adminwatch #chatBtn,.adminwatch #reactBtn,.adminwatch #menuBtn{display:none}
+.adm-alerts{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:12px 14px;border-radius:16px;background:var(--panel);border:1px solid var(--line-2)}
+.adm-alerts .t{flex:1 1 200px;display:flex;flex-direction:column;gap:2px}.adm-alerts .t b{font-size:15px}.adm-alerts .t small{font-size:12px;color:var(--muted)}
+.adm-alerts .seg{flex:1 1 320px;grid-template-columns:repeat(3,1fr)}.adm-alerts .seg button{font-size:13px;padding:0 6px}
+.toast.admalert{pointer-events:auto;display:flex;align-items:center;gap:12px;text-align:left}.toast.admalert .linkbtn{color:#14212c;font-weight:800;text-decoration:underline;min-height:32px}
 .adm-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;background:var(--fill);font-size:12px;font-weight:800;color:var(--soft);white-space:nowrap}
 .adm-view .wtop .pill{background:var(--fill);color:var(--ink)}
 .adm-empty{padding:28px 16px;border-radius:18px;border:1.5px dashed var(--line-2);text-align:center;color:var(--muted);font-size:14px}
@@ -721,6 +725,10 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
       <h1>Admin</h1><span class="adm-only">Only you can see this</span>
       <span style="flex:1"></span>
       <span class="adm-live" id="admLive"><i class="ondot" aria-hidden="true"></i><span>Live · updates every 5 seconds</span></span>
+    </div>
+    <div class="adm-alerts">
+      <span class="t"><b>Tell me when</b><small id="admAlertNote"></small></span>
+      <div class="seg" role="group" aria-label="Tell me when"><button type="button" data-alert="start" aria-pressed="false">A game starts</button><button type="button" data-alert="open" aria-pressed="false">A table opens</button><button type="button" data-alert="off" aria-pressed="false">Off</button></div>
     </div>
     <section aria-label="Right now"><h2 class="adm-h">Right now</h2><div class="adm-cards" id="admCards"></div></section>
     <div class="adm-tabs" role="tablist" aria-label="Admin sections">

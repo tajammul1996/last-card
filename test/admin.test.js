@@ -14,7 +14,7 @@ function phone(name) {
   const p = { s, name, token: tok(), state: null, admin: null, ev: [] };
   s.on('state', (v) => { p.state = v; });
   s.on('adminState', (m) => { p.admin = m; });
-  for (const e of ['adminEnded', 'chat']) s.on(e, (m) => p.ev.push([e, m]));
+  for (const e of ['adminEnded', 'chat', 'adminAlert']) s.on(e, (m) => p.ev.push([e, m]));
   p.call = (ev, d) => new Promise((r) => s.emit(ev, d || {}, r));
   p.ready = new Promise((r) => s.on('connect', async () => { await p.call('hello', { token: p.token }); p.login = await p.call('login', { name, pin: '1234', mode: 'new' }); r(); }));
   return p;
@@ -26,9 +26,15 @@ function phone(name) {
   assert(boss.login.admin === true && ana.login.admin === false, 'only Boss is an admin');
   assert(!(await ana.call('adminOverview')).ok, 'a player cannot open the admin page');
 
-  const { code } = await ana.call('create');
+  const pref = await boss.call('adminPref', {});
+  assert(pref.ok && pref.alerts === 'start', 'alerts default to game starts');
+  assert(!(await ana.call('adminPref', { alerts: 'open' })).ok, 'players cannot set admin alerts');
+  const { code } = await ana.call('create'); await sleep(50);
+  assert(!boss.ev.some(([e]) => e === 'adminAlert'), 'no alert for opening a table by default');
   await ben.call('join', { code });
   await ana.call('start'); await sleep(50);
+  const al = boss.ev.find(([e]) => e === 'adminAlert');
+  assert(al && al[1].code === code && al[1].kind === 'start' && /Ana/.test(al[1].text), 'admin hears a game started');
   boss.s.emit('practiceStat', {}, () => {});
   await sleep(50);
 
@@ -73,6 +79,16 @@ function phone(name) {
   const o3 = await boss.call('adminOverview');
   assert(!o3.tables.some((x) => x.code === code), 'ended table gone');
 
+  // switch to "a table opens"
+  assert((await boss.call('adminPref', { alerts: 'open' })).alerts === 'open', 'alert setting saved');
+  const n0 = boss.ev.filter(([e]) => e === 'adminAlert').length;
+  const { code: c2 } = await ben.call('create'); await sleep(50);
+  const a2 = boss.ev.filter(([e]) => e === 'adminAlert');
+  assert(a2.length === n0 + 1 && a2[a2.length - 1][1].kind === 'open' && a2[a2.length - 1][1].code === c2, 'admin hears a table opened');
+  await boss.call('adminPref', { alerts: 'off' });
+  await ana.call('create'); await sleep(50);
+  assert(boss.ev.filter(([e]) => e === 'adminAlert').length === n0 + 1, 'off means no alerts');
+  console.log('admin alerts: game starts, table opens, off: ok');
   console.log('admin: access, overview, usage counts, silent watch, unwatch, table closed: ok');
   for (const p of [boss, ana, ben]) p.s.close();
   server.close(); process.exit(0);

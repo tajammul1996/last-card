@@ -228,6 +228,10 @@ async function meta(key, make) {
   if (!v && make) { v = JSON.stringify(make()); if (r) await r.set(k, v, { NX: true }); else mem.kv.set(k, v); v = r ? await r.get(k) : v; }
   return v ? JSON.parse(v) : null;
 }
+async function setMeta(key, val) {
+  const k = 'lc:meta:' + key, v = JSON.stringify(val);
+  if (r) await r.set(k, v); else mem.kv.set(k, v);
+}
 
 // ---------- usage counters for the admin screen ----------
 // Counters per day (India time by default, STATS_TZ_MIN to change) (rounds, deals, signups, practice) plus a set of who played each day.
@@ -269,4 +273,4 @@ async function stats() {
 const persistent = () => !!r;
 async function close() { if (r) { try { await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };
+module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };

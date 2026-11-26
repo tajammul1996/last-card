@@ -104,7 +104,7 @@ function toast(msg, kind, html) {
   if (html) el.innerHTML = html; else el.textContent = msg;
   const box = $('#toasts'); box.appendChild(el);
   while (box.children.length > (view === 'game' ? 2 : 3)) box.firstChild.remove();
-  setTimeout(() => el.remove(), kind === 'win' ? 4200 : kind === 'chat' ? 4000 : 2800);
+  setTimeout(() => el.remove(), kind === 'admalert' ? 9000 : kind === 'win' ? 4200 : kind === 'chat' ? 4000 : 2800);
 }
 function cardHTML(c, o) {
   o = o || {};
@@ -1314,7 +1314,37 @@ function renderAdmin() {
   const sv = d.server;
   $('#admServer').innerHTML = `<p>Up ${ago(sv.uptime * 1000)} · build ${esc(String(sv.build || '').slice(0, 10))}</p><p>Memory ${Math.round(sv.mem / 1048576)} MB · ${sv.sockets} connection${sv.sockets === 1 ? '' : 's'}</p><p>Tables ${sv.saved ? 'saved to Key Value' : 'in memory only'} · accounts ${sv.accounts ? 'saved' : 'in memory only'}</p>`;
   admSetTab(admTab);
+  admAlertsUI(d.alerts || 'start');
 }
+function admAlertsUI(v) {
+  $$('.adm-alerts [data-alert]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.alert === v)));
+  const pushOn = pushSupported() && Notification.permission === 'granted' && load('lc-push') === 'on';
+  $('#admAlertNote').textContent = v === 'off' ? 'No alerts about new games.'
+    : pushOn ? 'A pop-up while the app is open, a phone alert when it isn’t.'
+    : pushSupported() ? 'Pop-ups only while the app is open. Tap your choice again to allow phone alerts.'
+    : 'Pop-ups only while the app is open. Install the app to get phone alerts.';
+}
+$('.adm-alerts').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-alert]'); if (!b) return;
+  const v = b.dataset.alert; admAlertsUI(v);
+  const r = await send('adminPref', { alerts: v });
+  if (r.ok && admData) admData.alerts = r.alerts;
+  if (v !== 'off' && pushSupported() && !(Notification.permission === 'granted' && load('lc-push') === 'on')) await enablePush();
+  admAlertsUI(r.ok ? r.alerts : v);
+});
+socket.on('adminAlert', (m) => {
+  if (!m || !me || !me.admin) return;
+  if (view === 'admin') admPoll();
+  Snd.play('chat');
+  toast('', 'admalert', `<span>${esc(m.text)}</span><button class="linkbtn" data-adm-watch="${esc(m.code)}">Watch</button>`);
+});
+$('#toasts').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-adm-watch]'); if (!b) return;
+  b.closest('.toast').remove();
+  if (practice) endPractice();
+  else if (curCode && curCode !== adminWatching) send('away', {}, true);
+  adminWatch(b.dataset.admWatch);
+});
 function admSetTab(tab) {
   admTab = tab;
   $$('.adm-tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
