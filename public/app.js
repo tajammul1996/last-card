@@ -20,6 +20,7 @@ if (!/^[a-zA-Z0-9]{16,64}$/.test(token)) { token = Array.from(crypto.getRandomVa
 let session = load('lc-session'), me = null, build = null, last = null, ready = false;
 
 /* ---------- view state ---------- */
+let idleTimer = null, idleAt = 0; // idle-close countdown
 let admData = null, admTimer = null, admTab = 'tables', adminWatching = null; // admin (see below)
 let view = 'home', curCode = null, G = null, boardFrom = 'home', boardGame = 'all', boardPeriod = 'week';
 let armedCall = false, seenV = -1, lastTopV = -1, pendingWild = null, scrollToPlayable = false;
@@ -135,6 +136,7 @@ function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#'
 function show(v) {
   if (v !== 'game' && practice) endPractice();
   if (v !== 'game' && adminWatching) adminLeave();
+  if (v !== 'game' && idleTimer) { clearInterval(idleTimer); idleTimer = null; $('#idleWarn').hidden = true; }
   if (v !== 'admin') clearTimeout(admTimer);
   view = v;
   document.body.classList.toggle('in-game', v === 'game');
@@ -279,12 +281,12 @@ const latest = {}, latestChat = {};
 socket.on('state', (s) => { if (!s) return; latest[s.code] = s; if (s.code === curCode) onState(s); });
 socket.on('ended', (m) => {
   if (!m || m.code !== curCode) return;
-  curCode = null; G = null; setHash(''); closeSheets(); $('#chat').classList.remove('open'); showHome();
+  curCode = null; G = null; setHash(''); closeSheets(); hideIdle(); $('#chat').classList.remove('open'); showHome();
   const meName = me && me.name;
   const el = document.createElement('div'); el.className = 'sheet'; el.style.position = 'fixed'; el.style.zIndex = '50';
   el.innerHTML = `<div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="endT">
     <span class="grab" aria-hidden="true"></span>
-    <div><p class="eyebrow">${m.by === meName ? 'You ended the game' : esc(m.by) + ' ended the game'}${m.midRound ? ` during round ${m.rounds}` : ` after ${m.rounds} round${m.rounds === 1 ? '' : 's'}`}</p><h2 id="endT">${m.standings[0] && m.standings[0].wins ? (m.standings[0].name === meName ? 'You won the game!' : esc(m.standings[0].name) + ' won the game!') : 'Game over'}</h2></div>
+    <div><p class="eyebrow">${m.reason === 'idle' ? `Table ${esc(m.code)} closed: nobody played for 10 minutes` : (m.by === meName ? 'You ended the game' : esc(m.by) + ' ended the game') + (m.midRound ? ` during round ${m.rounds}` : ` after ${m.rounds} round${m.rounds === 1 ? '' : 's'}`)}</p><h2 id="endT">${m.standings[0] && m.standings[0].wins ? (m.standings[0].name === meName ? 'You won the game!' : esc(m.standings[0].name) + ' won the game!') : 'Game over'}</h2></div>
     <ol class="standings">${m.standings.map((p) => `<li>${avatarFor(p.name.toLowerCase(), p.name, { size: 'sm' })}<span class="nm">${esc(p.name)}${p.name === meName ? ' (you)' : ''}</span><span class="w">${p.wins} ★</span></li>`).join('')}</ol>
     <button class="btn gold block" style="min-height:54px">Done</button>
   </div>`;
@@ -293,6 +295,24 @@ socket.on('ended', (m) => {
   document.body.appendChild(el);
   if (m.by !== meName) Snd.play('roundover');
 });
+// ---------- closing idle tables ----------
+function hideIdle() { clearInterval(idleTimer); idleTimer = null; $('#idleWarn').hidden = true; }
+socket.on('idleWarn', (m) => {
+  if (!m || m.code !== curCode || adminWatching) return;
+  if (!m.closesAt) { if (!$('#idleWarn').hidden && m.by && m.by !== (me && me.name)) toast(`${m.by} kept the table open`); hideIdle(); return; }
+  idleAt = Date.now() + (m.closesAt - (m.now || Date.now()));
+  const tick = () => {
+    const left = Math.max(0, Math.round((idleAt - Date.now()) / 1000));
+    $('#iwClock').textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+    $('#iwClock').setAttribute('aria-label', `${Math.ceil(left / 60)} minute${left > 60 ? 's' : ''} left`);
+  };
+  $('#iwNote').textContent = G && G.status === 'playing' ? 'Nobody has played or chatted for 8 minutes.' : 'Nobody has dealt or chatted for 8 minutes.';
+  tick(); clearInterval(idleTimer); idleTimer = setInterval(tick, 1000);
+  $('#idleWarn').hidden = false; buzz();
+});
+$('#iwKeep').onclick = () => { hideIdle(); send('keepOpen', {}, true); };
+$('#iwLeave').onclick = () => { hideIdle(); $('#menuLeave').click(); };
+
 socket.on('left', (m) => { if (m && m.code === curCode) { toast('You were removed from the table'); curCode = null; G = null; setHash(''); showHome(); } });
 socket.on('react', (m) => { if (m && m.code === curCode && view === 'game' && ['😂', '😱', '😤', '👏'].includes(m.e)) floatEmoji(m.e, m.by); });
 socket.on('recorded', (m) => { if (m && m.code === curCode) { recorded = m; if (G && G.status === 'over') render(); } });

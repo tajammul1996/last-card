@@ -614,19 +614,14 @@ io.on('connection', (socket) => {
     const c = ctx(); if (!c) return ack({ ok: false });
     const t = c.t;
     if (!c.isHost && isOnline(t.players.get(t.s.host))) return ack({ ok: false, error: 'Only the host can end the game.' });
-    const wins = t.s.wins || {};
-    const standings = [...t.players.values()].sort((a, b) => (wins[b.id] || 0) - (wins[a.id] || 0) || a.joined - b.joined)
-      .map((p) => ({ name: p.name, wins: wins[p.id] || 0 }));
-    const msg = { code: t.code, by: c.p.name, rounds: t.s.round || 0, midRound: t.s.status === 'playing', standings };
-    for (const p of t.players.values()) {
-      forget(t, p);
-      for (const sid of p.sockets) {
-        const sock = io.sockets.sockets.get(sid);
-        if (sock) { sock.emit('ended', msg); sock.leave(t.code); sock.data.code = null; sock.data.pid = null; }
-      }
-    }
-    tellObservers(t);
-    tables.delete(t.code); markDirty(t);
+    closeTable(t, 'ended', c.p.name);
+    ack({ ok: true });
+  });
+  // anyone at the table can reset the idle countdown
+  on('keepOpen', (_, ack) => {
+    const c = ctx(); if (!c) return ack({ ok: false });
+    c.t.lastActive = Date.now(); c.t.emptySince = null; c.t.warnedFor = null;
+    io.to(c.t.code).emit('idleWarn', { code: c.t.code, closesAt: null, by: c.p.name });
     ack({ ok: true });
   });
   on('makeHost', ({ id }, ack) => {
@@ -726,16 +721,51 @@ async function alertAdmins(kind, t, by) {
 // admins watching a table that closes go back to their dashboard
 function tellObservers(t) { if (t.observers) for (const sid of t.observers) io.to(sid).emit('adminEnded', { code: t.code }); }
 
-// drop tables nobody has touched for a few hours
-setInterval(() => {
-  const now = Date.now();
-  for (const t of tables.values()) {
-    const anyoneHere = [...t.players.values()].some(isOnline);
-    if (!anyoneHere && now - t.lastActive > TABLE_TTL_MS) {
-      tellObservers(t); tables.delete(t.code);
+// Recently closed tables, so an old link can say what happened instead of "not found".
+const closedTables = new Map(); // code -> { at, reason, by, rounds, standings }
+const CLOSED_KEEP_MS = 24 * 3600_000;
+
+// Close a table for good: everyone at it sees the standings and goes home.
+// reason: 'ended' (someone pressed End game) or 'idle' (nobody played for a while)
+function closeTable(t, reason, by) {
+  const wins = t.s.wins || {};
+  const standings = [...t.players.values()].sort((a, b) => (wins[b.id] || 0) - (wins[a.id] || 0) || a.joined - b.joined)
+    .map((p) => ({ name: p.name, wins: wins[p.id] || 0 }));
+  const msg = { code: t.code, by: by || null, reason, rounds: t.s.round || 0, midRound: t.s.status === 'playing', standings };
+  for (const p of t.players.values()) {
+    forget(t, p);
+    for (const sid of p.sockets) {
+      const sock = io.sockets.sockets.get(sid);
+      if (sock) { sock.emit('ended', msg); sock.leave(t.code); sock.data.code = null; sock.data.pid = null; }
     }
   }
-}, 10 * 60_000).unref();
+  tellObservers(t);
+  closedTables.set(t.code, { at: Date.now(), reason, by: by || null, rounds: msg.rounds, standings });
+  tables.delete(t.code); markDirty(t);
+}
+
+// ---------- closing stale tables ----------
+// A table closes after IDLE_CLOSE_MS with no moves and no chat, or with nobody online.
+// IDLE_WARN_MS before that, everyone still there gets a countdown and a "Keep it open" button.
+const IDLE_CLOSE_MS = Number(process.env.IDLE_CLOSE_MS || 10 * 60_000);
+const IDLE_WARN_MS = Math.min(2 * 60_000, Math.round(IDLE_CLOSE_MS / 5));
+function idleDeadline(t) {
+  const anyoneHere = [...t.players.values()].some(isOnline);
+  if (anyoneHere) t.emptySince = null; else if (!t.emptySince) t.emptySince = Date.now();
+  return Math.min(t.lastActive + IDLE_CLOSE_MS, t.emptySince ? t.emptySince + IDLE_CLOSE_MS : Infinity);
+}
+function sweepIdle() {
+  const now = Date.now();
+  for (const t of [...tables.values()]) {
+    const closesAt = idleDeadline(t);
+    if (now >= closesAt) { closeTable(t, 'idle'); continue; }
+    const warn = now >= closesAt - IDLE_WARN_MS;
+    if (warn && t.warnedFor !== closesAt) { t.warnedFor = closesAt; io.to(t.code).emit('idleWarn', { code: t.code, closesAt, now }); }
+    else if (!warn && t.warnedFor) { t.warnedFor = null; io.to(t.code).emit('idleWarn', { code: t.code, closesAt: null }); }
+  }
+  for (const [code, x] of closedTables) if (now - x.at > CLOSED_KEEP_MS) closedTables.delete(code);
+}
+setInterval(sweepIdle, Number(process.env.IDLE_SWEEP_MS || 5_000)).unref();
 
 // Render sends SIGTERM before replacing this server with a new version: save everything first.
 let stopping = false;
