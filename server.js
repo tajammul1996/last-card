@@ -40,6 +40,9 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// Admin accounts, by name, from the ADMIN_NAMES setting on Render (comma separated)
+const ADMINS = new Set(String(process.env.ADMIN_NAMES || '').split(',').map((n) => Accounts.keyOf(n)).filter(Boolean));
+const isAdmin = (socket) => !!(socket.data.account && ADMINS.has(socket.data.account.key));
 const webpush = require('web-push');
 let vapidPublic = null;
 async function setupPush() {
@@ -120,7 +123,7 @@ function install(nt) {
       if (np) for (const sid of p.sockets) np.sockets.add(sid);
     }
   }
-  if (old) { nt.requests = old.requests; nt.allowed = old.allowed; }
+  if (old) { nt.requests = old.requests; nt.allowed = old.allowed; nt.observers = old.observers; }
   tables.set(nt.code, nt);
   for (const p of nt.players.values()) remember(nt, p);
   return nt;
@@ -196,6 +199,10 @@ function broadcast(t, save = true) {
   for (const p of t.players.values()) {
     for (const sid of p.sockets) io.to(sid).emit('state', viewFor(t, p.id));
   }
+  if (t.observers && t.observers.size) {
+    const view = Object.assign(viewFor(t, null), { admin: true });
+    for (const sid of t.observers) io.to(sid).emit('adminState', { code: t.code, view });
+  }
   if (save) { markDirty(t); maybeAlert(t); }
 }
 function plainLog(t) {
@@ -257,7 +264,7 @@ function removePlayer(t, id) {
     const sock = io.sockets.sockets.get(sid);
     if (sock) { sock.leave(t.code); sock.data.code = null; sock.data.pid = null; sock.emit('left', { code: t.code }); }
   }
-  if (t.players.size === 0) { tables.delete(t.code); markDirty(t); return; }
+  if (t.players.size === 0) { tellObservers(t); tables.delete(t.code); markDirty(t); return; }
   if (t.s.host === id) {
     // hand the table to the earliest player who is online, else the earliest player
     const order = seatedOrder(t);
@@ -293,6 +300,7 @@ function attach(socket, t, p) {
 // A round counts when someone wins by playing their last card. Players who aren't signed in aren't counted.
 function recordRound(t, game) {
   const s = t.s;
+  Accounts.bumpStat('rounds').catch(() => {});
   const acct = (id) => { const p = t.players.get(id); return p && p.account; };
   const winner = acct(s.winner);
   Accounts.recordResult(game, winner, s.order.map(acct))
@@ -377,7 +385,8 @@ io.on('connection', (socket) => {
     if (!validToken(token)) return ack({ ok: false, error: 'Bad token', build: BUILD });
     socket.data.token = token;
     socket.data.account = session ? await Accounts.fromSession(session) : null;
-    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name } : null, sessionValid: !session || !!socket.data.account, last: lastFor() });
+    if (socket.data.account) Accounts.markActive(socket.data.account.key).catch(() => {});
+    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name, admin: isAdmin(socket) } : null, sessionValid: !session || !!socket.data.account, last: lastFor() });
   });
 
   on('login', async ({ name, pin, mode }, ack) => {
@@ -388,9 +397,11 @@ io.on('connection', (socket) => {
     const r = await Accounts.login(name, pin, mode === 'new' ? 'new' : 'back');
     if (!r.ok) return ack(r);
     socket.data.account = { key: r.key, name: r.name };
+    Accounts.markActive(r.key).catch(() => {});
+    if (r.created) Accounts.bumpStat('signups').catch(() => {});
     const c = ctx();
     if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
-    ack({ ok: true, session: r.session, name: r.name, created: r.created, last: lastFor() });
+    ack({ ok: true, session: r.session, name: r.name, created: r.created, last: lastFor(), admin: isAdmin(socket) });
   });
 
   on('checkName', async ({ name }, ack) => {
@@ -488,6 +499,59 @@ io.on('connection', (socket) => {
     socket.data.asked = null;
     ack({ ok: true });
   });
+  // ---------- admin: every table, usage numbers, and silent watching ----------
+  on('practiceStat', (_, ack) => {
+    const now = Date.now();
+    if (now - (socket.data.lastPractice || 0) > 15000) { socket.data.lastPractice = now; Accounts.bumpStat('practice').catch(() => {}); }
+    ack({ ok: true });
+  });
+  on('adminOverview', async (_, ack) => {
+    if (!isAdmin(socket)) return ack({ ok: false, error: 'Not allowed.' });
+    const now = Date.now(), online = new Set();
+    for (const sock of io.sockets.sockets.values()) if (sock.connected && sock.data.account) online.add(sock.data.account.key);
+    let atTables = 0, watching = 0, waiting = 0;
+    const order = { playing: 0, over: 1, lobby: 2 };
+    const list = [...tables.values()].map((t) => {
+      const s = t.s, seated = new Set(s.order || []);
+      const players = [...t.players.values()].sort((a, b) => a.joined - b.joined).map((p) => {
+        const on = isOnline(p), watch = s.status === 'playing' && !seated.has(p.id);
+        if (on) atTables++; if (watch) watching++;
+        return { name: p.name, online: on, cards: (s.hands[p.id] || []).length, turn: s.status === 'playing' && s.order[s.turn] === p.id, host: p.id === s.host, watching: watch };
+      });
+      const req = t.requests ? t.requests.size : 0; waiting += req;
+      const lg = (s.log || []).slice(-1)[0];
+      return {
+        code: t.code, status: s.status, round: s.round || 0, host: (t.players.get(s.host) || {}).name || '', players,
+        turnFor: s.status === 'playing' ? now - (s.turnAt || now) : 0, pending: s.pending || 0, deck: (s.deck || []).length,
+        openFor: now - (t.created || now), idleFor: now - (t.lastActive || now), requests: req, approve: !!(s.settings && s.settings.approve),
+        winner: s.status === 'over' ? (t.players.get(s.winner) || {}).name || '' : '', last: lg ? plainLog(t) : '', observers: t.observers ? t.observers.size : 0,
+      };
+    }).filter((x) => x.players.length).sort((a, b) => (order[a.status] - order[b.status]) || a.idleFor - b.idleFor);
+    const st = await Accounts.stats().catch(() => null);
+    const top = await Accounts.leaderboard('all', 5, 'week').catch(() => []);
+    ack({
+      ok: true, now, tables: list,
+      live: { playing: list.filter((x) => x.status === 'playing').length, lobby: list.filter((x) => x.status === 'lobby').length, over: list.filter((x) => x.status === 'over').length, online: online.size, atTables, watching, waiting },
+      stats: st, top: top.map((x) => ({ name: x.name, wins: x.wins })),
+      server: { uptime: Math.round(process.uptime()), mem: process.memoryUsage().rss, build: BUILD, saved: !!kv, accounts: Accounts.persistent(), sockets: io.engine.clientsCount },
+    });
+  });
+  on('adminWatch', async ({ code }, ack) => {
+    if (!isAdmin(socket)) return ack({ ok: false, error: 'Not allowed.' });
+    const t = tables.get(String(code || '').toUpperCase());
+    if (!t) return ack({ ok: false, error: 'That table has closed.' });
+    unobserve();
+    t.observers = t.observers || new Set(); t.observers.add(socket.id);
+    socket.data.observing = t.code;
+    ack({ ok: true, code: t.code, view: Object.assign(viewFor(t, null), { admin: true }) });
+  });
+  on('adminUnwatch', (_, ack) => { unobserve(); ack({ ok: true }); });
+  function unobserve() {
+    const t = socket.data.observing && tables.get(socket.data.observing);
+    if (t && t.observers) t.observers.delete(socket.id);
+    socket.data.observing = null;
+  }
+
   on('vapid', (_, ack) => ack({ ok: !!vapidPublic, key: vapidPublic }));
   on('pushSub', async ({ sub }, ack) => {
     if (!socket.data.account) return ack({ ok: false });
@@ -532,7 +596,9 @@ io.on('connection', (socket) => {
     if (!hostOnly(c, ack)) return;
     const seated = seatedOrder(c.t);
     if (seated.length < 2) return ack({ ok: false, error: 'You need at least 2 players.' });
-    ack({ ok: act(c.t, (s) => { if (s.status === 'playing') return false; E.dealRound(s, seated); }) });
+    const ok = act(c.t, (s) => { if (s.status === 'playing') return false; E.dealRound(s, seated); });
+    if (ok) Accounts.bumpStat('deals').catch(() => {});
+    ack({ ok });
   });
   // the host can close the table at any time (anyone can when the host has gone offline):
   // everyone sees the standings and goes home
@@ -551,6 +617,7 @@ io.on('connection', (socket) => {
         if (sock) { sock.emit('ended', msg); sock.leave(t.code); sock.data.code = null; sock.data.pid = null; }
       }
     }
+    tellObservers(t);
     tables.delete(t.code); markDirty(t);
     ack({ ok: true });
   });
@@ -617,6 +684,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    const ob = socket.data.observing && tables.get(socket.data.observing);
+    if (ob && ob.observers) ob.observers.delete(socket.id);
     const at = socket.data.asked && tables.get(socket.data.asked);
     if (at && at.requests) for (const [k, r] of at.requests) { r.sockets.delete(socket.id); if (!r.sockets.size) { at.requests.delete(k); broadcast(at, false); } }
     const c = ctx();
@@ -624,13 +693,16 @@ io.on('connection', (socket) => {
   });
 });
 
+// admins watching a table that closes go back to their dashboard
+function tellObservers(t) { if (t.observers) for (const sid of t.observers) io.to(sid).emit('adminEnded', { code: t.code }); }
+
 // drop tables nobody has touched for a few hours
 setInterval(() => {
   const now = Date.now();
   for (const t of tables.values()) {
     const anyoneHere = [...t.players.values()].some(isOnline);
     if (!anyoneHere && now - t.lastActive > TABLE_TTL_MS) {
-      tables.delete(t.code);
+      tellObservers(t); tables.delete(t.code);
     }
   }
 }, 10 * 60_000).unref();

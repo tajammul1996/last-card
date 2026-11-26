@@ -20,6 +20,7 @@ if (!/^[a-zA-Z0-9]{16,64}$/.test(token)) { token = Array.from(crypto.getRandomVa
 let session = load('lc-session'), me = null, build = null, last = null, ready = false;
 
 /* ---------- view state ---------- */
+let admData = null, admTimer = null, admTab = 'tables', adminWatching = null; // admin (see below)
 let view = 'home', curCode = null, G = null, boardFrom = 'home', boardGame = 'all', boardPeriod = 'week';
 let armedCall = false, seenV = -1, lastTopV = -1, pendingWild = null, scrollToPlayable = false;
 let chatMsgs = [], unread = 0, afterSignIn = null, recorded = null;
@@ -116,6 +117,8 @@ function backHTML(w, cls) { return `<div class="card back ${cls || ''}" style="-
 /* ---------- server calls ---------- */
 function send(ev, data, quiet) {
   if (practice && curCode === PRACTICE) return Promise.resolve(practiceAct(ev, data || {}));
+  // watching as admin is look-only: nothing that would touch the table leaves this phone
+  if (adminWatching && !/^(admin|hello|vapid|pushSub|leaderboard|login|logout|checkName)/.test(ev)) return Promise.resolve({ ok: false });
   return new Promise((res) => {
     if (!socket.connected) { if (!quiet) toast('Not connected yet. Hang on a second.'); return res({ ok: false, error: 'Not connected yet. Hang on a second.' }); }
     socket.timeout(8000).emit(ev, data || {}, (err, r) => {
@@ -131,9 +134,11 @@ const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosIn
 function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#' + id).hidden = true; $('#reactPop').hidden = true; }
 function show(v) {
   if (v !== 'game' && practice) endPractice();
+  if (v !== 'game' && adminWatching) adminLeave();
+  if (v !== 'admin') clearTimeout(admTimer);
   view = v;
   document.body.classList.toggle('in-game', v === 'game');
-  for (const id of ['home', 'invite', 'board', 'game']) $('#' + id).hidden = id !== v;
+  for (const id of ['home', 'invite', 'board', 'game', 'admin']) $('#' + id).hidden = id !== v;
   if (v !== 'game') { closeSheets('signin'); $('#chat').classList.remove('open'); }
   window.scrollTo(0, 0);
 }
@@ -144,6 +149,7 @@ function route() {
   const code = hashCode();
   if (code) openTable(code);
   else if (location.hash === '#leaderboard') showBoard(view === 'game' ? 'game' : 'home');
+  else if (location.hash === '#admin' && me && me.admin) showAdmin();
   else showHome();
 }
 window.addEventListener('hashchange', route);
@@ -233,7 +239,7 @@ $('#siForm').addEventListener('submit', async (e) => {
     if (r.notFound) setHint('bad', r.error);
     return;
   }
-  me = { name: r.name }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last; authMode = 'back';
+  me = { name: r.name, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last; authMode = 'back';
   $('#signin').hidden = true;
   toast(r.created ? `Welcome, ${r.name}! Remember your PIN to keep your wins.` : `Signed in as ${r.name}`);
   const then = afterSignIn; afterSignIn = null;
@@ -247,7 +253,7 @@ async function switchUser() {
   route();
 }
 function needSignIn(then) { if (me) { then(); return; } openSignIn(then); }
-function rerender() { if (view === 'home') showHome(); else if (view === 'invite' && inviteInfo) showInvite(inviteInfo); else if (view === 'board') showBoard(boardFrom); else render(); }
+function rerender() { if (view === 'admin') showAdmin(); else if (view === 'home') showHome(); else if (view === 'invite' && inviteInfo) showInvite(inviteInfo); else if (view === 'board') showBoard(boardFrom); else render(); }
 
 /* ---------- connection ---------- */
 socket.on('connect', async () => {
@@ -256,10 +262,11 @@ socket.on('connect', async () => {
   if (r.build) { if (!build) build = r.build; else if (r.build !== build) $('#updateBar').hidden = false; }
   if (r.ok) { me = r.account || null; if (!r.sessionValid) { session = ''; store('lc-session', ''); } last = r.last || null; }
   ready = true; $('#homeNote').textContent = '';
-  if (view === 'game' && curCode && !hashCode() && !practice) setHash(curCode);
+  if (view === 'game' && curCode && !hashCode() && !practice && !adminWatching) setHash(curCode);
   setOffline(false);
   syncPush();
-  if (!practice) route();
+  if (adminWatching && me && me.admin) adminWatch(adminWatching);
+  else if (!practice) route();
 });
 socket.on('disconnect', () => { setTimeout(() => { if (!socket.connected) $('#conn').hidden = false; }, 1500); });
 socket.on('connect_error', () => {
@@ -320,6 +327,7 @@ function showHome() {
   if (me) { ab.className = 'acct'; ab.innerHTML = avatarFor(me.name.toLowerCase(), me.name) + esc(me.name); ab.setAttribute('aria-label', 'Your account, ' + me.name); }
   else { ab.className = 'acct out'; ab.textContent = 'Sign in'; ab.removeAttribute('aria-label'); }
   $('#greet').textContent = me ? `Ready for a round, ${me.name}?` : 'Ready for a round?';
+  $('#adminBtn').hidden = !(me && me.admin);
   $('#homeErr').textContent = '';
   // signed out: the sign-in form sits right on the page instead of hiding behind a header button
   const authBox = $('#homeAuth');
@@ -695,6 +703,12 @@ function render() {
     coachUpdate();
     return;
   }
+  if (G.admin) {
+    $('#gSub').textContent = (G.status === 'lobby' ? 'Lobby' : 'Round ' + (G.round || 1)) + ' · admin view';
+    renderWatchers();
+    if (G.status === 'lobby') renderAdminLobby(); else renderTable();
+    return;
+  }
   renderWatchers(); renderRequests();
   $('#gSub').textContent = G.status === 'lobby' ? 'Lobby · ' + (isHost() ? 'you’re the host' : 'hosted by ' + nameOf(G.host)) : 'Round ' + (G.round || 1) + ' · ' + (st.stack ? 'stacking on' : 'no stacking') + (st.drawUntil ? ' · draw until you can play' : '');
   if (G.status === 'lobby') renderLobby(); else renderTable();
@@ -750,6 +764,7 @@ function wireOver() {
 /* ---------- watching ---------- */
 function watchers() { return G && G.status === 'playing' && !G.practice ? G.players.filter((p) => !G.order.includes(p.id)) : []; }
 function watchPanelHTML() {
+  if (G.admin) return adminPanelHTML();
   const others = watchers().filter((p) => p.id !== G.me).map((p) => p.name);
   return `<section class="watch-panel" aria-label="You’re watching">
     <div class="wtop"><span class="pill" role="status"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>Watching</span>${others.length ? `<span class="note">with ${esc(listNames(others.slice(0, 3)))}</span>` : ''}</div>
@@ -760,6 +775,8 @@ function watchPanelHTML() {
 function wireWatchPanel() {
   const c = $('#wpChat'); if (c) c.onclick = () => (isWide() ? $('#chatInp').focus() : openChat());
   const l = $('#wpLeave'); if (l) l.onclick = () => $('#menuLeave').click();
+  const ab = $('#wpAdmBack'); if (ab) ab.onclick = () => showAdmin();
+  const nx = $('#wpNext'); if (nx) nx.onclick = () => adminNext();
 }
 function renderWatchers() {
   const w = watchers(), b = $('#watchBtn');
@@ -824,7 +841,7 @@ function renderTable() {
     <div class="actions" id="actions"></div>
     ${seated ? `<div class="handwrap" id="handwrap"><div class="handlabel"><span>Your hand · ${hand.length}</span><span id="swipeHint">${myTurn && G.status === 'playing' ? `<span class="play">${playable} playable</span>` : G.wins[meId] ? G.wins[meId] + '★ wins' : ''}</span></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
       : watchPanelHTML()}
-    ${G.status === 'over' ? overHTML() : ''}`;
+    ${G.status === 'over' && !G.admin ? overHTML() : ''}`;
   renderActions();
   if (seated) renderHand(hand, myTurn, prevScroll, R);
   $('#drawPile').onclick = doDraw;
@@ -906,7 +923,7 @@ function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) 
     </div>
     ${seated ? `<div class="handwrap q" id="handwrap"><div class="hbar" role="status">${pill}<div class="actions" id="actions"></div></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
       : watchPanelHTML()}
-    ${G.status === 'over' ? overHTML() : ''}`;
+    ${G.status === 'over' && !G.admin ? overHTML() : ''}`;
   lastTopV = G.v; flipRing = false; qAdvance = false;
   wireWatchPanel();
   renderActions();
@@ -1168,7 +1185,7 @@ $('#picker').addEventListener('click', (e) => { const b = e.target.closest('butt
 
 function renderActions() {
   const el = $('#actions'); if (!el || !G) return;
-  if (G.status !== 'playing') { el.innerHTML = ''; return; }
+  if (G.status !== 'playing' || G.admin) { el.innerHTML = ''; return; }
   const meId = G.me, hand = G.hand || [], myTurn = G.order[G.turn] === meId, seated = G.order.includes(meId);
   const b = [];
   if (myTurn && G.drew) b.push('<button class="btn" data-a="pass">Pass</button>');
@@ -1219,6 +1236,146 @@ function overHTML() {
   </div></div>`;
 }
 
+
+/* ---------- admin ----------
+   Only accounts named in ADMIN_NAMES on the server get this. Watching is silent: the server keeps
+   admins out of the table's room and player list, and sends them the same view a watcher gets. */
+function ago(ms) {
+  const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return s + 's';
+  const m = Math.floor(s / 60); if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60); return h < 48 ? h + 'h ' + (m % 60) + 'm' : Math.floor(h / 24) + 'd';
+}
+function showAdmin() {
+  if (!me || !me.admin) { showHome(); return; }
+  show('admin'); setHash('admin');
+  if (admData) renderAdmin();
+  admPoll();
+}
+async function admPoll() {
+  clearTimeout(admTimer);
+  if (view !== 'admin') return;
+  const r = await send('adminOverview', {}, true);
+  if (view !== 'admin') return;
+  $('#admLive').classList.toggle('stale', !r.ok);
+  $('#admLive span').textContent = r.ok ? 'Live · updates every 5 seconds' : 'Reconnecting…';
+  if (r.ok) { admData = r; renderAdmin(); }
+  else if (r.error === 'Not allowed.') { me.admin = false; showHome(); return; }
+  admTimer = setTimeout(admPoll, 5000);
+}
+function admTableHTML(t) {
+  const chip = t.status === 'playing' ? 'Round ' + t.round : t.status === 'over' ? 'Between rounds' : 'Lobby';
+  const ps = t.players.map((p) => {
+    const sub = t.status === 'playing' && !p.watching ? `${p.cards} card${p.cards === 1 ? '' : 's'}` : p.watching ? 'watching' : p.host ? 'host' : '';
+    return `<li class="${p.turn ? 'turn' : ''}${p.watching ? ' w' : ''}">${avatarFor(p.name.toLowerCase(), p.name, { size: 'sm', online: p.online })}${esc(p.name)}${sub ? ` <small>${sub}</small>` : ''}</li>`;
+  }).join('');
+  let line;
+  if (t.status === 'playing') {
+    const tp = t.players.find((p) => p.turn);
+    line = [tp ? `${esc(tp.name)}’s turn for ${ago(t.turnFor)}` : '', t.pending ? `+${t.pending} stacked` : '', `${t.deck} in deck`].filter(Boolean).join(' · ');
+  } else if (t.status === 'over') line = `${esc(t.winner || 'Someone')} won round ${t.round} · waiting for ${esc(t.host)} to deal`;
+  else line = `Hosted by ${esc(t.host)} · ${t.players.length} of 10 seated`;
+  const meta = [`Open ${ago(t.openFor)}`, `Last move ${ago(t.idleFor)} ago`, t.requests ? `${t.requests} waiting to join` : '', t.approve ? 'Host approves joiners' : ''].filter(Boolean);
+  return `<article class="adm-t" aria-label="Table ${esc(t.code)}">
+    <div class="tc"><span class="code">${esc(t.code)}</span><span class="adm-chip s-${t.status}">${chip}</span></div>
+    <div class="tm"><ul class="adm-ps" aria-label="Players">${ps}</ul><p class="line" style="margin:0">${line}</p>${t.last ? `<p class="line" style="margin:0;color:var(--muted)">${esc(fmt(t.last))}</p>` : ''}</div>
+    <div class="ta">${meta.map((m) => `<span>${m}</span>`).join('')}</div>
+    <button class="btn light" data-watch="${esc(t.code)}" aria-label="Watch table ${esc(t.code)}">Watch</button>
+  </article>`;
+}
+function renderAdmin() {
+  const d = admData; if (!d) return;
+  const L = d.live, S = d.stats;
+  const card = (n, l, sub, hot) => `<div class="adm-card${hot ? ' hot' : ''}"><b>${n}</b><span>${l}</span><small>${sub || '&nbsp;'}</small></div>`;
+  $('#admCards').innerHTML = card(L.playing, 'Games playing', L.over ? `${L.over} between rounds` : '', L.playing > 0)
+    + card(L.lobby, 'In a lobby', 'waiting to deal')
+    + card(L.online, 'Online now', 'signed in, app open')
+    + card(L.atTables, 'At tables', L.watching ? `${L.watching} watching` : '')
+    + card(L.waiting, 'Waiting to join', L.waiting ? 'needs the host’s OK' : '')
+    + card(S ? S.rounds.today : '–', 'Rounds today', S ? `${S.rounds.week} this week` : '');
+  $('#admTN').textContent = d.tables.length ? `${d.tables.length} open · busiest first` : '';
+  $('#admTables').innerHTML = d.tables.length ? d.tables.map(admTableHTML).join('')
+    : '<p class="adm-empty">No tables open right now. They show up here as soon as someone creates one.</p>';
+  if (S) {
+    const row = (l, o, all) => `<tr><th scope="row">${l}</th><td>${o.today}</td><td>${o.week}</td><td>${all === undefined ? o.all : all}</td></tr>`;
+    const max = Math.max(1, ...S.rounds.per);
+    const bars = S.days.map((day, i) => {
+      const n = S.rounds.per[i], isToday = i === S.days.length - 1;
+      const lab = isToday ? 'Today' : new Date(day + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short' });
+      return `<div class="${isToday ? 'today' : ''}"><b>${n}</b><i style="height:${Math.round((n / max) * 80)}%"></i><small>${lab}</small></div>`;
+    }).join('');
+    $('#admUsage').innerHTML = `<table class="adm-use"><thead><tr><th scope="col"><span class="sr">Metric</span></th><th scope="col">Today</th><th scope="col">7 days</th><th scope="col">All time</th></tr></thead><tbody>
+      ${row('Rounds finished', S.rounds)}${row('Rounds dealt', S.deals)}${row('Active players', S.active, Math.max(S.players, S.active.week))}${row('New players', S.signups)}${row('Practice games', S.practice)}
+      </tbody></table>
+      <p class="note" style="margin:14px 0 0">Rounds finished, last 7 days</p>
+      <div class="adm-bars" role="img" aria-label="Rounds finished per day: ${S.rounds.per.join(', ')}">${bars}</div>`;
+  } else $('#admUsage').innerHTML = '<p class="note">Usage numbers need the account store. It isn’t reachable right now.</p>';
+  $('#admTop').innerHTML = (d.top || []).length ? d.top.map((x, i) => `<li><span class="r">${i + 1}</span>${avatarFor(x.name.toLowerCase(), x.name, { size: 'sm' })}<span class="n">${esc(x.name)}</span><span>${x.wins} win${x.wins === 1 ? '' : 's'}</span></li>`).join('')
+    : '<li class="note">No wins yet this week.</li>';
+  const sv = d.server;
+  $('#admServer').innerHTML = `<p>Up ${ago(sv.uptime * 1000)} · build ${esc(String(sv.build || '').slice(0, 10))}</p><p>Memory ${Math.round(sv.mem / 1048576)} MB · ${sv.sockets} connection${sv.sockets === 1 ? '' : 's'}</p><p>Tables ${sv.saved ? 'saved to Key Value' : 'in memory only'} · accounts ${sv.accounts ? 'saved' : 'in memory only'}</p>`;
+  admSetTab(admTab);
+}
+function admSetTab(tab) {
+  admTab = tab;
+  $$('.adm-tabs [data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  $$('#admin .adm-sec').forEach((s) => s.classList.toggle('on', s.dataset.sec === tab));
+}
+$('.adm-tabs').addEventListener('click', (e) => { const b = e.target.closest('[data-tab]'); if (b) admSetTab(b.dataset.tab); });
+$('#admTables').addEventListener('click', (e) => { const b = e.target.closest('[data-watch]'); if (b) adminWatch(b.dataset.watch); });
+$('#admBack').onclick = () => showHome();
+$('#adminBtn').onclick = () => showAdmin();
+$('#gAdmBack').onclick = () => showAdmin();
+
+async function adminWatch(code) {
+  const r = await send('adminWatch', { code });
+  if (!r.ok) { if (view === 'admin') admPoll(); else showAdmin(); return; }
+  clearTimeout(admTimer);
+  adminWatching = r.code;
+  curCode = r.code; G = null; seenV = -1; lastTopV = -1; armedCall = false; chatMsgs = []; unread = 0; recorded = null; updateBadge();
+  show('game'); setHash('admin');
+  document.body.classList.add('adminwatch'); $('#gAdmBack').hidden = false; $('#gAdmTag').hidden = false;
+  $('#gCode').textContent = r.code;
+  onState(r.view);
+}
+function adminLeave() {
+  if (!adminWatching) return;
+  adminWatching = null; curCode = null; G = null;
+  send('adminUnwatch', {}, true);
+  document.body.classList.remove('adminwatch'); $('#gAdmBack').hidden = true; $('#gAdmTag').hidden = true;
+}
+function adminNext() {
+  const list = ((admData && admData.tables) || []).filter((t) => t.code !== adminWatching);
+  const next = list.find((t) => t.status === 'playing') || list[0];
+  if (next) adminWatch(next.code); else toast('No other tables are open.');
+}
+socket.on('adminState', (m) => { if (m && adminWatching && m.code === adminWatching && view === 'game') onState(m.view); });
+socket.on('adminEnded', (m) => { if (m && m.code === adminWatching) { toast(`Table ${m.code} closed`); showAdmin(); } });
+function adminPanelHTML() {
+  const w = watchers();
+  const ps = G.order.slice().sort((a, b) => (G.wins[b] || 0) - (G.wins[a] || 0) || count(a) - count(b));
+  const top = G.status === 'over'
+    ? `<p><b style="color:var(--ink)">${esc(nameOf(G.winner))}</b> won round ${G.round || 1}. Waiting for ${esc(nameOf(G.host))} to deal the next one.</p>
+       <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>`
+    : '<p>Nobody at this table can see you. You see what a watcher sees: the table, card counts and every move, but not anyone’s cards.</p>';
+  return `<section class="watch-panel adm-view" aria-label="Admin view">
+    <div class="wtop"><span class="pill" role="status"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10 10 0 0 1 12 19c-6.4 0-10-7-10-7a18 18 0 0 1 4.1-5M9.9 5.2A9 9 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-2.2 3.2M2 2l20 20"/></svg>Admin view</span><span class="note">${G.order.length} playing${w.length ? ` · ${w.length} watching` : ''}</span></div>
+    ${top}
+    <div class="row2"><button class="btn light" id="wpAdmBack">Back to admin</button><button class="btn" id="wpNext">Next table</button></div>
+  </section>`;
+}
+function renderAdminLobby() {
+  const ps = G.players;
+  $('#gMain').innerHTML = `<div class="adm-lob">
+    <section class="watch-panel adm-view" aria-labelledby="admLobH">
+      <div class="wtop"><span class="pill" role="status">Lobby</span><span class="note">${ps.length} of 10 seated</span></div>
+      <h2 id="admLobH" style="margin:0;font-size:18px">Waiting for ${esc(nameOf(G.host))} to deal</h2>
+      <ul class="plist">${ps.map((p) => `<li>${av(p.id, '', true)}<span class="nm">${esc(p.name)}</span><span class="tag">${p.id === G.host ? 'Host' : p.online ? 'Ready' : 'Away'}</span></li>`).join('')}</ul>
+      <p class="note">The round shows here as soon as it starts. Nobody can see you.</p>
+      <div class="row2"><button class="btn light" id="wpAdmBack">Back to admin</button><button class="btn" id="wpNext">Next table</button></div>
+    </section></div>`;
+  wireWatchPanel();
+}
+
 /* ---------- practice vs computer ----------
    The whole game runs here on the phone with the same rules engine as the server, so it works
    offline and never touches the leaderboard. Computer players think for a moment before playing. */
@@ -1252,7 +1409,10 @@ function openPracticeSetup() {
   paint();
   $('#practice').hidden = false;
 }
+// practice runs on the phone; just tell the server a game happened so the admin page can count it
+function practiceStat() { try { if (socket.connected) socket.emit('practiceStat', {}, () => {}); } catch (e) {} }
 function startPractice() {
+  adminLeave();
   if (curCode && curCode !== PRACTICE) send('away', {}, true);
   const bots = BOT_NAMES.slice(0, prOpts.n).map((name, i) => ({ id: 'bot' + i, name }));
   const s = { code: PRACTICE, host: 'you', status: 'lobby', settings: { stack: !!prOpts.stack, drawUntil: !!prOpts.drawUntil }, v: 0, wins: {}, round: 0, order: [], hands: {}, deck: [], discard: [], log: [] };
@@ -1260,6 +1420,7 @@ function startPractice() {
   curCode = PRACTICE; G = null; seenV = -1; lastTopV = -1; armedCall = false; chatMsgs = []; unread = 0; recorded = null;
   show('game'); setHash(''); $('#gCode').textContent = 'Practice';
   E.dealRound(s, ['you', ...bots.map((b) => b.id)]); s.v++;
+  practiceStat();
   practiceEmit();
 }
 function endPractice() {
@@ -1294,7 +1455,7 @@ function practiceAct(ev, d) {
   else if (ev === 'pass') ok = E.applyPass(s, 'you');
   else if (ev === 'lateCall') ok = E.applyLateCall(s, 'you', s.unsafeV);
   else if (ev === 'catch') ok = !!s.unsafe && s.unsafe !== 'you' && E.applyCatch(s, 'you', s.unsafe, s.unsafeV);
-  else if (ev === 'start') { if (s.status !== 'playing') { E.dealRound(s, ['you', ...practice.bots.map((b) => b.id)]); ok = true; } }
+  else if (ev === 'start') { if (s.status !== 'playing') { E.dealRound(s, ['you', ...practice.bots.map((b) => b.id)]); ok = true; practiceStat(); } }
   else if (ev === 'away' || ev === 'leave') { endPractice(); return { ok: true }; }
   else return { ok: false };
   if (ok) { s.v++; practiceEmit(); }

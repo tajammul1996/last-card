@@ -229,7 +229,44 @@ async function meta(key, make) {
   return v ? JSON.parse(v) : null;
 }
 
+// ---------- usage counters for the admin screen ----------
+// Counters per day (India time by default, STATS_TZ_MIN to change) (rounds, deals, signups, practice) plus a set of who played each day.
+const TZ_MIN = Number(process.env.STATS_TZ_MIN || 330);
+const dayId = (t = Date.now()) => new Date(t + TZ_MIN * 60000).toISOString().slice(0, 10);
+const lastDays = (n) => Array.from({ length: n }, (_, i) => dayId(Date.now() - (n - 1 - i) * 864e5));
+const STAT_TTL = 120 * 24 * 3600;
+async function bumpStat(name, by = 1) {
+  const k = 'lc:stat:' + name, d = dayId();
+  if (r) { await r.hIncrBy(k, d, by); await r.hIncrBy(k, 'all', by); return; }
+  const m = mem.kv.get(k) || {}; m[d] = (m[d] || 0) + by; m.all = (m.all || 0) + by; mem.kv.set(k, m);
+}
+async function markActive(acctKey) {
+  if (!acctKey) return;
+  const k = 'lc:stat:active:' + dayId();
+  if (r) { await r.sAdd(k, acctKey); await r.expire(k, STAT_TTL); return; }
+  const s = mem.kv.get(k) || new Set(); s.add(acctKey); mem.kv.set(k, s);
+}
+async function stats() {
+  const days = lastDays(7), today = days[6], out = { days };
+  for (const name of ['rounds', 'deals', 'signups', 'practice']) {
+    const all = r ? await r.hGetAll('lc:stat:' + name) : mem.kv.get('lc:stat:' + name) || {};
+    const per = days.map((d) => Number(all[d] || 0));
+    out[name] = { today: per[6], week: per.reduce((a, b) => a + b, 0), all: Number(all.all || 0), per };
+  }
+  const sets = days.map((d) => 'lc:stat:active:' + d);
+  if (r) {
+    out.active = { today: await r.sCard(sets[6]), week: (await r.sUnion(sets)).length };
+    out.players = await r.zCard(K.played('all'));
+  } else {
+    const u = new Set(); sets.forEach((k) => (mem.kv.get(k) || new Set()).forEach((x) => u.add(x)));
+    out.active = { today: (mem.kv.get(sets[6]) || new Set()).size, week: u.size };
+    out.players = (mem.z.get(K.played('all')) || new Map()).size;
+  }
+  out.today = today;
+  return out;
+}
+
 const persistent = () => !!r;
 async function close() { if (r) { try { await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, GAMES: { lastcard: 'Last Card' } };
+module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };

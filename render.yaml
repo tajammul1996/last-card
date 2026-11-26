@@ -17,6 +17,9 @@ services:
       # Set the value in the Render dashboard; it is never kept in this repo.
       - key: STORE_URL
         sync: false
+      # Account names that can open the admin screen, comma separated (e.g. Tajammul).
+      - key: ADMIN_NAMES
+        sync: false
 
   # Keeps every table saved while the game server redeploys or restarts.
   - type: keyvalue

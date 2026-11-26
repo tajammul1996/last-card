@@ -499,6 +499,67 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .ondot{display:inline-block;width:8px;height:8px;margin-left:6px;border-radius:50%;background:var(--online);box-shadow:0 0 0 2px rgba(61,220,132,.2);vertical-align:middle}
 .on-now{color:var(--online);font-weight:800}
 .lb-online{margin:0;display:flex;align-items:center;gap:2px;font-size:14px;font-weight:700;color:var(--soft)}.lb-online .ondot{margin:0 8px 0 2px}
+/* admin */
+.adm{max-width:1280px;margin:0 auto;padding:12px 16px 40px;display:flex;flex-direction:column;gap:18px}
+.adm-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-height:56px}
+.adm-head h1{margin:0;font-family:var(--display);font-weight:800;font-size:26px}
+.adm-only{padding:4px 10px;border-radius:99px;background:var(--fill);font-size:12px;font-weight:800;color:var(--soft)}
+.adm-live{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:var(--soft)}.adm-live .ondot{margin:0}
+.adm-live.stale .ondot{background:#5d7385;box-shadow:none}
+.adm-h{margin:0 0 10px;font-family:var(--body);font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.adm-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.adm-card{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-radius:16px;background:var(--panel);border:1px solid var(--line-2)}
+.adm-card.hot{background:var(--gold-wash);border-color:var(--gold-edge)}
+.adm-card b{font-family:var(--display);font-weight:800;font-size:28px;line-height:1}
+.adm-card span{font-size:13px;font-weight:700}.adm-card small{font-size:12px;color:var(--muted)}
+.adm-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:4px;border-radius:14px;background:var(--deep)}
+.adm-tabs button{height:40px;border:0;border-radius:10px;background:transparent;color:var(--soft);font:700 14px var(--body)}
+.adm-tabs button[aria-selected="true"]{background:var(--ink);color:var(--felt);font-weight:800}
+.adm-body{display:flex;flex-direction:column;gap:16px}
+.adm-sec{display:none}.adm-sec.on{display:flex;flex-direction:column;gap:10px}
+.adm-side{display:flex;flex-direction:column;gap:16px}
+.adm-sh{display:flex;align-items:baseline;gap:12px}.adm-sh h2,.adm-box h2{margin:0;font-family:var(--display);font-weight:800;font-size:20px}
+.adm-box{padding:16px;border-radius:20px;background:var(--panel);border:1px solid var(--line-2)}
+.adm-box.quiet{background:rgba(245,239,227,.04);font-size:13px;color:var(--soft)}
+.adm-box.quiet p{margin:0 0 4px}
+.adm-t{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:14px;border-radius:18px;background:var(--panel);border:1px solid var(--line-2);margin-bottom:10px}
+.adm-t .tc{display:flex;flex-direction:column;gap:6px;min-width:130px}
+.adm-t .code{font-family:var(--display);font-weight:800;font-size:21px;letter-spacing:.12em}
+.adm-chip{align-self:flex-start;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:800;background:var(--fill);color:var(--ink)}
+.adm-chip.s-playing{background:var(--gold);color:var(--gold-ink)}.adm-chip.s-over{background:rgba(61,220,132,.18);color:#8fe0b5}
+.adm-t .tm{flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:8px}
+.adm-ps{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.adm-ps li{display:flex;align-items:center;gap:6px;padding:3px 10px 3px 3px;border-radius:99px;background:var(--fill);border:1px solid transparent;font-size:13px;font-weight:700}
+.adm-ps li.turn{background:var(--gold-wash);border-color:var(--gold-edge)}.adm-ps li.w{opacity:.6}
+.adm-ps li .av{width:24px;height:24px;font-size:11px}.adm-ps li small{color:var(--muted);font-weight:600}
+.adm-t .line{font-size:13px;color:var(--soft)}
+.adm-t .ta{display:flex;flex-direction:column;gap:2px;font-size:13px;color:var(--muted);min-width:110px}
+.adm-t .btn{min-height:44px}
+.adm-use{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}
+.adm-use th,.adm-use td{padding:9px 0;text-align:right}.adm-use th[scope=row]{text-align:left;font-weight:700}
+.adm-use thead th{font-size:12px;color:var(--muted);font-weight:700;padding-top:0}
+.adm-use tbody tr{border-top:1px solid var(--line-2)}
+.adm-bars{display:flex;align-items:flex-end;gap:8px;height:110px;margin-top:8px}
+.adm-bars div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;height:100%}
+.adm-bars i{width:100%;border-radius:6px 6px 2px 2px;background:rgba(245,239,227,.35);min-height:2px}.adm-bars .today i{background:var(--gold)}
+.adm-bars small{font-size:11px;color:var(--muted)}.adm-bars b{font-size:11px;color:var(--soft)}
+.adm-top{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.adm-top li{display:flex;gap:10px;align-items:center;min-height:36px;font-size:14px}.adm-top .r{width:16px;font-weight:800;color:var(--muted)}.adm-top .n{flex:1;font-weight:700}
+.adminwatch #chatBtn,.adminwatch #reactBtn,.adminwatch #menuBtn{display:none}
+.adm-tag{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;background:var(--fill);font-size:12px;font-weight:800;color:var(--soft);white-space:nowrap}
+.adm-view .wtop .pill{background:var(--fill);color:var(--ink)}
+.adm-empty{padding:28px 16px;border-radius:18px;border:1.5px dashed var(--line-2);text-align:center;color:var(--muted);font-size:14px}
+.adm-lob .watch-panel{border-radius:20px;border:1px solid var(--line-2)}
+.adm-lob{display:flex;flex-direction:column;gap:12px;max-width:560px;margin:16px auto;padding:0 16px;width:100%}
+@media (min-width:1024px){
+  .adm{padding:16px 32px 40px;gap:24px}
+  .adm-cards{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.adm-card{padding:16px 18px}.adm-card b{font-size:34px}
+  .adm-tabs{display:none}
+  .adm-body{flex-direction:row;align-items:flex-start;gap:24px}
+  .adm-body>[data-sec=tables]{flex:999 1 640px;min-width:0}.adm-side{flex:1 1 340px}
+  .adm-sec{display:flex;flex-direction:column;gap:10px}
+  .adminwatch .chat{display:none}
+}
 .fxl{position:fixed;z-index:45;pointer-events:none;display:grid;place-items:center}
 .fx-shock{border-radius:50%;border:5px solid var(--gold);box-sizing:border-box}
 .fx-wash{border-radius:50%;background:radial-gradient(circle,var(--wc) 0%,var(--wc) 35%,transparent 70%)}
@@ -576,6 +637,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
     <header class="appbar">
       <a class="logo" href="/">Last <span>Card</span></a>
       <nav aria-label="Main"><a href="#leaderboard">Leaderboard</a><a href="#" data-howto="1">How to play</a></nav>
+      <button class="iconbtn" id="adminBtn" aria-label="Admin" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></button>
       <button class="acct" id="acctBtn"></button>
     </header>
     <main class="home-grid">
@@ -636,6 +698,29 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 <div id="invite" class="screen" hidden><div class="invite" id="inviteBody"></div></div>
 
 <!-- ============ LEADERBOARD ============ -->
+<div id="admin" class="screen" hidden>
+  <div class="adm">
+    <div class="adm-head">
+      <button class="iconbtn" id="admBack" aria-label="Back to home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <h1>Admin</h1><span class="adm-only">Only you can see this</span>
+      <span style="flex:1"></span>
+      <span class="adm-live" id="admLive"><i class="ondot" aria-hidden="true"></i><span>Live · updates every 5 seconds</span></span>
+    </div>
+    <section aria-label="Right now"><h2 class="adm-h">Right now</h2><div class="adm-cards" id="admCards"></div></section>
+    <div class="adm-tabs" role="tablist" aria-label="Admin sections">
+      <button role="tab" data-tab="tables" aria-selected="true">Tables</button><button role="tab" data-tab="usage" aria-selected="false">Usage</button><button role="tab" data-tab="server" aria-selected="false">Server</button>
+    </div>
+    <div class="adm-body">
+      <section class="adm-sec on" data-sec="tables" aria-labelledby="admTT"><div class="adm-sh"><h2 id="admTT">Tables</h2><span class="note" id="admTN"></span></div><div id="admTables"></div></section>
+      <aside class="adm-side">
+        <section class="adm-sec adm-box" data-sec="usage" aria-labelledby="admUT"><h2 id="admUT">Usage</h2><div id="admUsage"></div></section>
+        <section class="adm-sec adm-box" data-sec="usage" aria-labelledby="admTopT"><h2 id="admTopT">Top this week</h2><ol class="adm-top" id="admTop"></ol></section>
+        <section class="adm-sec adm-box quiet" data-sec="server" aria-labelledby="admST"><h2 id="admST">Server</h2><div id="admServer"></div></section>
+      </aside>
+    </div>
+  </div>
+</div>
+
 <div id="board" class="screen" hidden>
   <div class="wrap board">
     <div class="board-head"><button class="iconbtn" id="boardBack" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button><h1>Leaderboard</h1></div>
@@ -656,8 +741,10 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 <!-- ============ GAME ============ -->
 <div id="game" class="screen" hidden>
   <header class="tbar">
+    <button class="iconbtn" id="gAdmBack" aria-label="Back to admin" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg></button>
     <button class="iconbtn" id="menuBtn" aria-label="Table menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     <span class="ttl"><b id="gCode">----</b><span id="gSub"></span></span>
+    <span class="adm-tag" id="gAdmTag" hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10 10 0 0 1 12 19c-6.4 0-10-7-10-7a18 18 0 0 1 4.1-5M9.9 5.2A9 9 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-2.2 3.2M2 2l20 20"/></svg>Hidden</span>
     <button class="watchbtn" id="watchBtn" aria-expanded="false" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span id="watchN">0</span></button>
     <button class="iconbtn" id="reactBtn" aria-label="Send a reaction" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8.5 14.5s1.3 2 3.5 2 3.5-2 3.5-2M9 9.5h.01M15 9.5h.01"/></svg></button>
     <button class="iconbtn" id="chatBtn" aria-label="Open chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.9A8 8 0 1 1 21 12z"/></svg><span class="badge" id="chatBadge" hidden>0</span></button>
