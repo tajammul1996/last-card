@@ -115,9 +115,82 @@ async function suggestNames(name, n = 3) {
 async function checkName(rawName) {
   const name = cleanName(rawName);
   if (!NAME_RE.test(name)) return { ok: true, valid: false, error: NAME_ERR };
-  const acct = await get(K.acct(keyOf(name)));
+  const key = keyOf(name);
+  const acct = await get(K.acct(key));
   if (!acct) return { ok: true, valid: true, available: true, name };
-  return { ok: true, valid: true, available: false, name: acct.name, suggestions: await suggestNames(acct.name) };
+  // a little about the player, so "Welcome back" shows the right person (all of it is on the public leaderboard anyway)
+  const wins = await zscore(K.wins(ALL), key), last = (await hgetall(K.last))[key] || null;
+  return { ok: true, valid: true, available: false, name: acct.name, wins: Math.round(wins || 0), last, reset: !!acct.reset, suggestions: await suggestNames(acct.name) };
+}
+async function zscore(k, member) {
+  if (r) return (await r.zScore(k, member)) || 0;
+  const z = mem.z.get(k); return (z && z.get(member)) || 0;
+}
+
+// ---------- feedback: ideas, problems and PIN resets, with admin replies ----------
+// lc:fb:<id> holds one thread; lc:fb:all (and lc:fb:u:<account>) list them newest-updated first.
+const FB_KEEP = 500;
+const FB_KINDS = ['idea', 'problem', 'other', 'pin'];
+const FB_STATUS = ['new', 'seen', 'planned', 'fixed', 'wontdo', 'done'];
+async function zadd(k, member, score) {
+  if (r) return r.zAdd(k, { score, value: member });
+  const z = mem.z.get(k) || new Map(); mem.z.set(k, z); z.set(member, score);
+}
+async function zrem(k, member) { if (r) return r.zRem(k, member); const z = mem.z.get(k); if (z) z.delete(member); }
+async function zcard(k) { if (r) return r.zCard(k); const z = mem.z.get(k); return z ? z.size : 0; }
+async function fbSave(t) {
+  await set('lc:fb:' + t.id, t);
+  await zadd('lc:fb:all', t.id, t.updated);
+  if (t.key) await zadd('lc:fb:u:' + t.key, t.id, t.updated);
+  // what still needs the admin's eye, counted without reading every thread
+  if (r) { if (t.adminUnread) await r.sAdd('lc:fb:todo', t.id); else await r.sRem('lc:fb:todo', t.id); }
+  else { const s = mem.kv.get('fbtodo') || new Set(); mem.kv.set('fbtodo', s); if (t.adminUnread) s.add(t.id); else s.delete(t.id); }
+}
+async function fbTodo() { if (r) return r.sCard('lc:fb:todo'); const s = mem.kv.get('fbtodo'); return s ? s.size : 0; }
+async function fbCreate({ key, name, kind, text, code, device }) {
+  const now = Date.now();
+  const t = { id: now.toString(36) + crypto.randomBytes(3).toString('hex'), key: key || null, name, kind: FB_KINDS.includes(kind) ? kind : 'other',
+    status: 'new', at: now, updated: now, code: code || null, device: device || null, msgs: [{ from: 'user', text, at: now }], unread: false, adminUnread: true };
+  await fbSave(t);
+  if ((await zcard('lc:fb:all')) > FB_KEEP) { // drop the oldest
+    const old = [...(await zall('lc:fb:all', 100000)).keys()].slice(FB_KEEP);
+    for (const id of old) { const o = await get('lc:fb:' + id); await zrem('lc:fb:all', id); if (o && o.key) await zrem('lc:fb:u:' + o.key, id); await del('lc:fb:' + id); if (r) await r.sRem('lc:fb:todo', id); else { const s = mem.kv.get('fbtodo'); if (s) s.delete(id); } }
+  }
+  return t;
+}
+async function fbGet(id) { return typeof id === 'string' && /^[a-z0-9]{6,24}$/.test(id) ? get('lc:fb:' + id) : null; }
+async function fbList(key, limit = 50) {
+  const ids = [...(await zall(key ? 'lc:fb:u:' + key : 'lc:fb:all', limit)).keys()];
+  if (!ids.length) return [];
+  if (r) return (await r.mGet(ids.map((id) => 'lc:fb:' + id))).map((v) => { try { return v ? JSON.parse(v) : null; } catch (e) { return null; } }).filter(Boolean);
+  return (await Promise.all(ids.map((id) => get('lc:fb:' + id)))).filter(Boolean);
+}
+async function fbUpdate(id, fn) {
+  const t = await fbGet(id); if (!t) return null;
+  if (fn(t) === false) return t;
+  t.updated = Date.now(); await fbSave(t);
+  return t;
+}
+
+// ---------- forgotten PINs ----------
+// The admin approves a reset; then the next sign-in with that name picks a new PIN (within a day).
+const RESET_MS = 24 * 3600_000;
+async function allowPinReset(rawName) {
+  const key = keyOf(cleanName(rawName));
+  const acct = await get(K.acct(key)); if (!acct) return null;
+  acct.reset = Date.now(); await set(K.acct(key), acct);
+  return acct.name;
+}
+async function setNewPin(rawName, pin) {
+  const key = keyOf(cleanName(rawName));
+  const acct = await get(K.acct(key));
+  if (!acct || !acct.reset || Date.now() - acct.reset > RESET_MS) return { ok: false, error: 'This PIN reset has expired. Ask the admin again.' };
+  if (!/^\d{4}$/.test(String(pin || ''))) return { ok: false, error: 'Your PIN is 4 digits.' };
+  acct.salt = crypto.randomBytes(12).toString('hex'); acct.hash = hashPin(pin, acct.salt); delete acct.reset;
+  await set(K.acct(key), acct); await del(K.fail(key));
+  const session = crypto.randomBytes(24).toString('hex');
+  await set(K.sess(session), key, { ex: SESSION_TTL });
+  return { ok: true, session, key, name: acct.name, created: false, newPin: true };
 }
 
 /**
@@ -142,7 +215,7 @@ async function login(rawName, pin, mode) {
       return { ok: false, taken: true, error: `“${name}” was just taken. Pick a different name.`, suggestions: await suggestNames(name) };
     acct = fresh; created = true;
   } else if (!acct) {
-    return { ok: false, notFound: true, error: `No player called “${name}” yet. New here? Choose “I’m new”.` };
+    return { ok: false, notFound: true, error: `No player called “${name}” yet.` };
   }
   if (!created) {
     const ok = crypto.timingSafeEqual(Buffer.from(hashPin(pin, acct.salt), 'hex'), Buffer.from(acct.hash, 'hex'));
@@ -289,4 +362,4 @@ async function stats() {
 const persistent = () => !!r;
 async function close() { if (r) { try { await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };
+module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, allowPinReset, setNewPin, fbCreate, fbGet, fbList, fbUpdate, fbTodo, FB_STATUS, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };

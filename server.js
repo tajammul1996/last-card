@@ -394,14 +394,101 @@ io.on('connection', (socket) => {
     socket.data.logins = (socket.data.logins || []).filter((x) => now - x < 60_000);
     if (socket.data.logins.length >= 12) return ack({ ok: false, error: 'Too many tries. Wait a minute.' });
     socket.data.logins.push(now);
-    const r = await Accounts.login(name, pin, mode === 'new' ? 'new' : 'back');
+    const r = mode === 'reset' ? await Accounts.setNewPin(name, pin) : await Accounts.login(name, pin, mode === 'new' ? 'new' : 'back');
     if (!r.ok) return ack(r);
     socket.data.account = { key: r.key, name: r.name };
     Accounts.markActive(r.key).catch(() => {});
     if (r.created) Accounts.bumpStat('signups').catch(() => {});
     const c = ctx();
     if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
-    ack({ ok: true, session: r.session, name: r.name, created: r.created, last: lastFor(), admin: isAdmin(socket) });
+    ack({ ok: true, session: r.session, name: r.name, created: r.created, newPin: !!r.newPin, last: lastFor(), admin: isAdmin(socket) });
+  });
+
+  // ---- feedback from players ----
+  const fbText = (x) => String(x || '').replace(/\s+\n/g, '\n').trim().slice(0, 1000);
+  on('fbSend', async ({ kind, text }, ack) => {
+    if (!needAccount(ack)) return;
+    const now = Date.now();
+    socket.data.fbSends = (socket.data.fbSends || []).filter((x) => now - x < 600_000);
+    if (socket.data.fbSends.length >= 6) return ack({ ok: false, error: 'That’s a lot of messages. Try again in a few minutes.' });
+    const msg = fbText(text);
+    if (msg.length < 2) return ack({ ok: false, error: 'Write a few words first.' });
+    socket.data.fbSends.push(now);
+    const c = ctx();
+    const t = await Accounts.fbCreate({ key: socket.data.account.key, name: socket.data.account.name, kind: ['idea', 'problem', 'other'].includes(kind) ? kind : 'other', text: msg, code: c ? c.t.code : null, device: deviceOf(socket) });
+    alertAdminsFeedback(t);
+    ack({ ok: true, item: fbUser(t) });
+  });
+  on('fbMine', async (_, ack) => {
+    if (!socket.data.account) return ack({ ok: true, items: [], unread: 0 });
+    const items = (await Accounts.fbList(socket.data.account.key, 50)).map(fbUser);
+    ack({ ok: true, items, unread: items.filter((t) => t.unread).length });
+  });
+  on('fbReply', async ({ id, text }, ack) => {
+    if (!needAccount(ack)) return;
+    const msg = fbText(text); if (msg.length < 1) return ack({ ok: false, error: 'Write something first.' });
+    const t = await Accounts.fbUpdate(id, (x) => { if (x.key !== socket.data.account.key || x.msgs.length >= 60) return false; x.msgs.push({ from: 'user', text: msg, at: Date.now() }); x.adminUnread = true; x.unread = false; });
+    if (!t || t.key !== socket.data.account.key) return ack({ ok: false });
+    alertAdminsFeedback(t, true);
+    ack({ ok: true, item: fbUser(t) });
+  });
+  on('fbRead', async ({ id }, ack) => {
+    if (!socket.data.account) return ack({ ok: false });
+    const t = await Accounts.fbUpdate(id, (x) => { if (x.key !== socket.data.account.key || !x.unread) return false; x.unread = false; });
+    ack({ ok: !!t });
+  });
+
+  // ---- the admin inbox ----
+  on('adminFb', async (_, ack) => {
+    if (!isAdmin(socket)) return ack({ ok: false, error: 'Not allowed.' });
+    const items = (await Accounts.fbList(null, 200)).map(fbAdmin);
+    ack({ ok: true, items });
+  });
+  on('adminFbOpen', async ({ id }, ack) => {
+    if (!isAdmin(socket)) return ack({ ok: false, error: 'Not allowed.' });
+    let seenNow = false;
+    const t = await Accounts.fbUpdate(id, (x) => { if (!x.adminUnread && x.status !== 'new') return false; x.adminUnread = false; if (x.status === 'new' && x.kind !== 'pin') { x.status = 'seen'; seenNow = true; } });
+    if (!t) return ack({ ok: false, error: 'That message is gone.' });
+    if (seenNow) tellPlayerFeedback(t, null);
+    ack({ ok: true, item: fbAdmin(t) });
+  });
+  on('adminFbReply', async ({ id, text, status }, ack) => {
+    if (!isAdmin(socket)) return ack({ ok: false, error: 'Not allowed.' });
+    const msg = fbText(text);
+    if (!msg && !Accounts.FB_STATUS.includes(status)) return ack({ ok: false, error: 'Write a reply or pick a status.' });
+    const t = await Accounts.fbUpdate(id, (x) => {
+      if (msg) x.msgs.push({ from: 'admin', text: msg, at: Date.now() });
+      if (Accounts.FB_STATUS.includes(status) && status !== 'new') { if (status !== x.status) x.msgs.push({ from: 'status', text: status, at: Date.now() }); x.status = status; }
+      x.unread = true; x.adminUnread = false;
+    });
+    if (!t) return ack({ ok: false, error: 'That message is gone.' });
+    tellPlayerFeedback(t, msg || null);
+    ack({ ok: true, item: fbAdmin(t) });
+  });
+  on('adminFbPin', async ({ id }, ack) => {
+    if (!isAdmin(socket)) return ack({ ok: false, error: 'Not allowed.' });
+    const t0 = await Accounts.fbGet(id); if (!t0 || t0.kind !== 'pin') return ack({ ok: false });
+    const name = await Accounts.allowPinReset(t0.name);
+    if (!name) return ack({ ok: false, error: 'That player no longer exists.' });
+    const t = await Accounts.fbUpdate(id, (x) => { x.status = 'done'; x.adminUnread = false; x.unread = true; x.msgs.push({ from: 'admin', text: `Done. Sign in as ${name} within a day and you’ll pick a new PIN.`, at: Date.now() }); });
+    ack({ ok: true, item: fbAdmin(t) });
+  });
+
+  // "Forgot your PIN?": goes to the admin inbox; once the admin allows it, signing in with that name picks a new PIN
+  on('forgotPin', async ({ name }, ack) => {
+    const now = Date.now();
+    socket.data.pinAsks = (socket.data.pinAsks || []).filter((x) => now - x < 3600_000);
+    if (socket.data.pinAsks.length >= 3) return ack({ ok: false, error: 'You’ve asked already. The admin will get to it.' });
+    const ck = await Accounts.checkName(name);
+    if (!ck.valid || ck.available) return ack({ ok: false, error: 'No player with that name.' });
+    socket.data.pinAsks.push(now);
+    const key = Accounts.keyOf(ck.name);
+    const open = (await Accounts.fbList(key, 20)).find((t) => t.kind === 'pin' && t.status === 'new');
+    if (!open) {
+      const t = await Accounts.fbCreate({ key, name: ck.name, kind: 'pin', text: `${ck.name} forgot their PIN and asked for a reset.`, device: deviceOf(socket) });
+      alertAdminsFeedback(t);
+    }
+    ack({ ok: true });
   });
 
   on('checkName', async ({ name }, ack) => {
@@ -543,6 +630,7 @@ io.on('connection', (socket) => {
       live: { playing: list.filter((x) => x.status === 'playing').length, lobby: list.filter((x) => x.status === 'lobby').length, over: list.filter((x) => x.status === 'over').length, online: online.size, atTables, watching, waiting },
       stats: st, top: top.map((x) => ({ name: x.name, wins: x.wins })), alerts: await adminPref(socket.data.account.key),
       chat: await Accounts.chatLog(80).catch(() => []),
+      fbTodo: await Accounts.fbTodo().catch(() => 0),
       server: { uptime: Math.round(process.uptime()), mem: process.memoryUsage().rss, build: BUILD, saved: !!kv, accounts: Accounts.persistent(), sockets: io.engine.clientsCount },
     });
   });
@@ -724,6 +812,33 @@ async function alertAdmins(kind, t, by) {
     if (socks.length) for (const s of socks) s.emit('adminAlert', { code: t.code, kind, text });
     else sendPush(key, { title: kind === 'open' ? 'New table' : 'New game', body: text, tag: 'lc-admin-' + t.code, url: '/#admin' });
   }
+}
+
+// ---------- feedback ----------
+function deviceOf(socket) {
+  const ua = String((socket.handshake && socket.handshake.headers['user-agent']) || '');
+  const os = /iPhone|iPad|iPod/.test(ua) ? 'iPhone' : /Android/.test(ua) ? 'Android' : /Mac OS X/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Unknown';
+  const br = /Edg\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  return os + ', ' + br;
+}
+const fbUser = (t) => ({ id: t.id, kind: t.kind, status: t.status, at: t.at, updated: t.updated, code: t.code, msgs: t.msgs, unread: !!t.unread });
+const fbAdmin = (t) => ({ ...fbUser(t), name: t.name, device: t.device, adminUnread: !!t.adminUnread, open: !!(t.code && tables.has(t.code)) });
+// the admin hears about new feedback (and replies to it) right away: a pop-up if the app is open, else a phone alert
+function alertAdminsFeedback(t, reply) {
+  const text = t.msgs[t.msgs.length - 1].text;
+  const head = reply ? `${t.name} replied` : t.kind === 'pin' ? `${t.name} forgot their PIN` : `${t.name} sent ${t.kind === 'idea' ? 'an idea' : t.kind === 'problem' ? 'a problem' : 'a message'}`;
+  for (const key of ADMINS) {
+    const socks = socketsOf(key);
+    if (socks.length) for (const s of socks) s.emit('adminFeedback', { id: t.id, kind: t.kind, head, text });
+    else sendPush(key, { title: head, body: text.slice(0, 140), tag: 'lc-fb-' + t.id, url: '/#admin' });
+  }
+}
+// the player hears about a reply or a status change the same way
+function tellPlayerFeedback(t, text) {
+  if (!t.key) return;
+  const socks = socketsOf(t.key);
+  if (socks.length) for (const s of socks) s.emit('fbUpdate', { id: t.id, kind: t.kind, status: t.status, text });
+  else sendPush(t.key, { title: text ? 'The admin replied' : 'Your feedback was updated', body: text ? text.slice(0, 140) : 'Status: ' + t.status, tag: 'lc-fbu-' + t.id, url: '/#feedback' });
 }
 
 // admins watching a table that closes go back to their dashboard

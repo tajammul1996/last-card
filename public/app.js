@@ -162,55 +162,112 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#reactPop,#reactBtn')) $('#reactPop').hidden = true;
 });
 
-/* ---------- sign-in sheet ---------- */
-let authMode = load('lc-nick') ? 'back' : 'new', checkTimer = null, checkSeq = 0, lastCheck = null;
-function renderAuth() {
-  const isNew = authMode === 'new';
-  $('#siBody').innerHTML = `
-    <div class="seg" role="group" aria-label="New or returning player">
-      <button type="button" data-mode="new" aria-pressed="${isNew}">I’m new</button>
-      <button type="button" data-mode="back" aria-pressed="${!isNew}">I’ve played before</button>
-    </div>
-    <label class="fld" for="siName">${isNew ? 'Pick a name' : 'Your name'}
-      <input id="siName" class="inp" maxlength="18" placeholder="Priya" autocomplete="nickname" aria-describedby="siHint" value="${esc(load('lc-nick'))}">
-    </label>
-    <p class="hint" id="siHint" role="status"></p>
-    <div class="sugg" id="siSugg" aria-label="Free names you can take"></div>
-    <label class="fld" for="siPin">${isNew ? 'Choose a 4-digit PIN' : 'Your 4-digit PIN'}
-      <input id="siPin" class="inp pin-inp" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="••••" type="password">
-    </label>
-    <p class="note">${isNew ? 'Names are unique. Use this name and PIN on any phone to keep your wins.' : 'Use the name and PIN you picked last time.'}</p>`;
-  $('#siGo').textContent = isNew ? 'Claim name and play' : 'Sign in';
-  $('#siErr').textContent = '';
-  runCheck();
+/* ---------- sign-in ----------
+   One flow for everyone: type your name, and the app works out whether you're new or back.
+   (The old "I'm new / I've played before" choice made people pick wrong and create a second name.)
+   Names used on this phone show as one-tap buttons, and claiming a new name on a phone that
+   already played as someone else asks once whether that's you. */
+let authStep = 'name', authName = '', authInfo = null, guardOk = false, checkTimer = null, checkSeq = 0;
+const CHEV = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+function knownNames() {
+  let k = []; try { k = JSON.parse(load('lc-known') || '[]'); } catch (e) {}
+  if (!Array.isArray(k)) k = [];
+  const nick = load('lc-nick'); if (nick && !k.some((x) => x.name.toLowerCase() === nick.toLowerCase())) k.push({ name: nick, at: 0 });
+  return k.filter((x) => x && typeof x.name === 'string').slice(0, 4);
 }
-function setHint(kind, text, sugg) {
+function rememberName(name) {
+  const k = knownNames().filter((x) => x.name.toLowerCase() !== name.toLowerCase());
+  k.unshift({ name, at: Date.now() }); store('lc-known', JSON.stringify(k.slice(0, 4)));
+}
+function daysAgo(t) {
+  if (!t) return '';
+  const d = Math.floor((Date.now() - t) / 86400000);
+  return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 14 ? `${d} days ago` : new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' });
+}
+function resetAuth() { authStep = 'name'; authName = ''; authInfo = null; guardOk = false; }
+function renderAuth() {
+  const go = $('#siGo'), body = $('#siBody'); go.hidden = false; go.disabled = false; $('#siErr').textContent = '';
+  const nm = esc(authName), key = authName.toLowerCase();
+  if (authStep === 'name') {
+    const known = knownNames();
+    body.innerHTML = `${known.length ? `<section class="known" aria-labelledby="knT"><h3 class="known-h" id="knT">Played on this phone</h3>${known.map((k) => `<button type="button" class="known-btn" data-known="${esc(k.name)}">${avatarFor(k.name.toLowerCase(), k.name)}<span class="t"><b>Continue as ${esc(k.name)}</b>${k.at ? `<span>Last here ${daysAgo(k.at)}</span>` : ''}</span>${CHEV}</button>`).join('')}</section><div class="or-line" aria-hidden="true"><span>or someone else</span></div>` : '<p class="note" style="margin:-6px 0 0">New or back again, it starts the same way: type your name.</p>'}
+      <label class="fld" for="siName">Your name
+        <input id="siName" class="inp" maxlength="18" placeholder="Your name" autocomplete="nickname" autocapitalize="words" enterkeyhint="next" aria-describedby="siHint" value="${nm}">
+      </label>
+      <p class="hint" id="siHint" role="status"></p>`;
+    go.textContent = 'Continue';
+    if (authName) liveCheck();
+  } else if (authStep === 'back' || authStep === 'reset') {
+    const i = authInfo || {}, reset = authStep === 'reset';
+    const stats = [i.wins ? `${i.wins} win${i.wins === 1 ? '' : 's'}` : '', i.last ? `last played ${daysAgo(i.last)}` : ''].filter(Boolean).join(' · ');
+    body.innerHTML = `<div class="who-big">${avatarFor(key, authName, { size: 'lg' })}<div><h3>Welcome back, ${nm}</h3>${stats ? `<p>${esc(stats)}</p>` : ''}</div></div>
+      <label class="fld" for="siPin">${reset ? 'Choose a new 4-digit PIN' : 'Your 4-digit PIN'}
+        <input id="siPin" class="inp pin-inp" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="${reset ? 'new-password' : 'current-password'}" placeholder="••••" type="password">
+      </label>
+      ${reset ? '<p class="note" style="margin:0">The admin reset your PIN. Pick a new one and you’re in.</p>' : ''}
+      <div class="auth-links">${reset ? '' : '<button type="button" class="linkbtn" id="siForgot">Forgot your PIN? Ask the admin to reset it</button>'}<button type="button" class="linkbtn muted" id="siOther">Not ${nm}? Use a different name</button></div>`;
+    go.textContent = reset ? 'Save new PIN and play' : 'Sign in';
+  } else if (authStep === 'new') {
+    body.innerHTML = `<div class="who-big">${avatarFor(key, authName, { size: 'lg' })}<div><h3>Hi ${nm}, you’re new!</h3><p class="okline">Nobody has this name yet</p></div></div>
+      <p class="tipbox">Played before under another name? <button type="button" class="linkbtn" id="siOther">Type that name instead</button> so your wins stay together.</p>
+      <label class="fld" for="siPin">Choose a 4-digit PIN
+        <input id="siPin" class="inp pin-inp" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" placeholder="••••" type="password">
+      </label>
+      <p class="note" style="margin:0">You’ll need it to sign in on another phone. Pick something you’ll remember.</p>`;
+    go.textContent = `Make “${authName}” mine`;
+  } else if (authStep === 'guard') {
+    const other = knownNames().find((k) => k.name.toLowerCase() !== key);
+    body.innerHTML = `<div class="who-big">${avatarFor(other.name.toLowerCase(), other.name, { size: 'lg' })}<div><h3>This phone has played as ${esc(other.name)}</h3></div></div>
+      <p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">Is that you? Sign in as ${esc(other.name)} to keep your wins in one place. A new name starts from zero.</p>
+      <button type="button" class="btn gold block" id="gdYes" data-known="${esc(other.name)}" style="min-height:54px">Yes, I’m ${esc(other.name)}</button>
+      <button type="button" class="btn block" id="gdNo" style="min-height:54px">No, I’m ${nm}, someone else</button>
+      <p class="note" style="text-align:center;margin:0">Sharing a phone is fine. Each person keeps their own name and PIN.</p>`;
+    go.hidden = true;
+  }
+}
+function setHint(kind, text) {
   const h = $('#siHint'), inp = $('#siName'); if (!h) return;
   h.className = 'hint ' + (kind || ''); h.textContent = text || '';
-  inp.classList.toggle('ok', kind === 'ok'); inp.classList.toggle('bad', kind === 'bad'); inp.setAttribute('aria-invalid', kind === 'bad' ? 'true' : 'false');
-  $('#siSugg').innerHTML = (sugg || []).map((n) => `<button type="button" data-sugg="${esc(n)}">${esc(n)}</button>`).join('');
+  inp.classList.toggle('bad', kind === 'bad'); inp.setAttribute('aria-invalid', kind === 'bad' ? 'true' : 'false');
 }
-async function runCheck() {
+// while typing: say which way this will go, so nobody is surprised on the next screen
+async function liveCheck() {
   const inp = $('#siName'); if (!inp) return;
   const name = inp.value.trim();
-  if (name.length < 2) { lastCheck = null; setHint('', name ? 'Use at least 2 letters or numbers.' : ''); return; }
+  if (name.length < 2) { setHint('', ''); return; }
   const seq = ++checkSeq;
   const r = await send('checkName', { name }, true);
-  if (seq !== checkSeq || !r.ok) return;
-  lastCheck = r;
-  const isNew = authMode === 'new';
+  if (seq !== checkSeq || !r.ok || authStep !== 'name') return;
   if (!r.valid) setHint('bad', r.error);
-  else if (isNew && r.available) setHint('ok', `“${r.name}” is free. It becomes yours once you set a PIN.`);
-  else if (isNew) setHint('bad', `“${r.name}” is already taken. Pick a different name${r.suggestions && r.suggestions.length ? ', or tap one of these:' : '.'}`, r.suggestions);
-  else if (r.available) setHint('bad', `No player called “${name}” yet. New here? Choose “I’m new”.`);
-  else setHint('ok', `Welcome back, ${r.name}. Enter your PIN.`);
+  else if (r.available) setHint('', `Nobody called “${r.name}” yet. Continue to make it yours.`);
+  else setHint('ok', `${r.name} has played before. Continue to enter the PIN.`);
 }
-$('#siBody').addEventListener('input', (e) => { if (e.target.id === 'siName') { clearTimeout(checkTimer); checkTimer = setTimeout(runCheck, 300); } });
-$('#siBody').addEventListener('click', (e) => {
-  const m = e.target.closest('[data-mode]');
-  if (m) { const keep = $('#siName').value; authMode = m.dataset.mode; renderAuth(); $('#siName').value = keep; runCheck(); return; }
-  const sg = e.target.closest('[data-sugg]');
-  if (sg) { $('#siName').value = sg.dataset.sugg; runCheck(); $('#siPin').focus(); }
+async function goName(name) {
+  name = (name || '').trim();
+  if (name.length < 2) { $('#siErr').textContent = 'Type your name first.'; const n = $('#siName'); if (n) n.focus(); return; }
+  $('#siGo').disabled = true;
+  const r = await send('checkName', { name }, true);
+  $('#siGo').disabled = false;
+  if (!r.ok) { $('#siErr').textContent = 'Couldn’t check that name. Try again.'; return; }
+  if (!r.valid) { authName = name; setHint('bad', r.error); return; }
+  authName = r.name; authInfo = r;
+  authStep = r.available ? 'new' : r.reset ? 'reset' : 'back';
+  renderAuth();
+  setTimeout(() => { const p = $('#siPin'); if (p) p.focus(); }, 30);
+}
+$('#siBody').addEventListener('input', (e) => {
+  if (e.target.id === 'siName') { authName = e.target.value; clearTimeout(checkTimer); checkTimer = setTimeout(liveCheck, 350); }
+  if (e.target.id === 'siPin') { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); if (e.target.value.length === 4 && authStep === 'back') $('#siForm').requestSubmit(); }
+});
+$('#siBody').addEventListener('click', async (e) => {
+  const k = e.target.closest('[data-known]'); if (k) { goName(k.dataset.known); return; }
+  if (e.target.closest('#siOther')) { authStep = 'name'; authName = ''; authInfo = null; renderAuth(); setTimeout(() => $('#siName').focus(), 30); return; }
+  if (e.target.closest('#gdNo')) { guardOk = true; authStep = 'new'; renderAuth(); $('#siPin').focus(); return; }
+  if (e.target.closest('#siForgot')) {
+    const b = $('#siForgot'); b.disabled = true;
+    const r = await send('forgotPin', { name: authName }, true);
+    b.outerHTML = `<p class="hint ${r.ok ? 'ok' : 'bad'}" role="status">${r.ok ? 'Sent. Once the admin resets it, sign in with your name here and you’ll pick a new PIN.' : esc(r.error || 'Couldn’t send that. Try again.')}</p>`;
+  }
 });
 function openSignIn(then) {
   afterSignIn = then || null;
@@ -219,31 +276,34 @@ function openSignIn(then) {
   if (me) {
     $('#siTitle').textContent = 'Your account';
     $('#siBody').innerHTML = `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name)}<span class="tx">Signed in as<b>${esc(me.name)}</b></span></div><p class="note">Wins from every game you finish signed in go on the leaderboard.</p>`;
-    $('#siGo').textContent = 'Switch to another name';
-  } else { $('#siTitle').textContent = 'Who’s playing?'; renderAuth(); }
+    $('#siGo').hidden = false; $('#siGo').textContent = 'Switch to another name';
+  } else { $('#siTitle').textContent = 'Who’s playing?'; resetAuth(); renderAuth(); }
   $('#signin').hidden = false;
-  setTimeout(() => { const n = $('#siName'); if (n && !n.value) n.focus(); }, 50);
+  setTimeout(() => { const n = $('#siName'); if (n && !n.value && !knownNames().length) n.focus(); }, 50);
 }
 $('#siForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (me) { await switchUser(); openSignIn(afterSignIn); return; }
-  const name = $('#siName').value.trim(), pin = $('#siPin').value, err = $('#siErr');
-  err.textContent = '';
-  if (name.length < 2) { err.textContent = 'Type your name first.'; $('#siName').focus(); return; }
-  if (authMode === 'new' && lastCheck && lastCheck.valid && !lastCheck.available && lastCheck.name.toLowerCase() === name.replace(/\s+/g, ' ').toLowerCase()) { err.textContent = 'That name is taken. Pick a different one.'; $('#siName').focus(); return; }
-  if (!/^\d{4}$/.test(pin)) { err.textContent = authMode === 'new' ? 'Choose a 4-digit PIN (numbers only).' : 'Enter your 4-digit PIN.'; $('#siPin').focus(); return; }
+  const err = $('#siErr'); err.textContent = '';
+  if (authStep === 'name') { await goName($('#siName').value); return; }
+  if (authStep === 'guard') return;
+  const pin = $('#siPin').value;
+  if (!/^\d{4}$/.test(pin)) { err.textContent = authStep === 'back' ? 'Enter your 4-digit PIN.' : 'Choose a 4-digit PIN (numbers only).'; $('#siPin').focus(); return; }
+  // a new name on a phone that already has a player: check once that it's really someone else
+  if (authStep === 'new' && !guardOk && knownNames().some((k) => k.name.toLowerCase() !== authName.toLowerCase())) { authStep = 'guard'; renderAuth(); const y = $('#gdYes'); if (y) y.focus(); return; }
   $('#siGo').disabled = true;
-  const r = await send('login', { name, pin, mode: authMode }, true);
+  const r = await send('login', { name: authName, pin, mode: authStep === 'new' ? 'new' : authStep === 'reset' ? 'reset' : 'back' }, true);
   $('#siGo').disabled = false;
   if (!r.ok) {
+    if (r.taken) { authStep = 'name'; renderAuth(); setHint('bad', r.error); return; }
     err.textContent = r.error || 'Couldn’t sign in. Try again.';
-    if (r.taken) setHint('bad', 'Pick a different name' + (r.suggestions && r.suggestions.length ? ', or tap one of these:' : '.'), r.suggestions);
-    if (r.notFound) setHint('bad', r.error);
+    const p = $('#siPin'); if (p) { p.value = ''; p.focus(); }
     return;
   }
-  me = { name: r.name, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last; authMode = 'back';
+  me = { name: r.name, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
+  rememberName(r.name); resetAuth();
   $('#signin').hidden = true;
-  toast(r.created ? `Welcome, ${r.name}! Remember your PIN to keep your wins.` : `Signed in as ${r.name}`);
+  toast(r.created ? `Welcome, ${r.name}! Remember your PIN to keep your wins.` : r.newPin ? `New PIN saved. Welcome back, ${r.name}!` : `Signed in as ${r.name}`);
   const then = afterSignIn; afterSignIn = null;
   if (then) then(); else rerender();
 });
