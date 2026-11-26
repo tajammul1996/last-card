@@ -278,7 +278,22 @@ h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
 .ring-center .piles{gap:18px}
 .dirlbl{font-size:12px;font-weight:700;color:var(--muted);display:flex;align-items:center;gap:6px}
 .msg.sys{align-self:center;background:none;color:var(--muted);font-size:13px;font-weight:600;text-align:center;padding:2px 8px}
-@media (min-width:1024px){.ringwrap{height:clamp(420px,58vh,540px)}.seat{width:100px}.seat .av{width:54px;height:54px;font-size:22px}.seat .nm{font-size:14px;max-width:100px}.seat .sub{font-size:12px}.ring-center .piles{gap:32px}}
+@media (min-width:1024px){.ringwrap{flex:1 1 0;height:auto;min-height:330px;max-height:560px;margin:20px auto 34px;container-type:size}
+  .ring-center{--cw:clamp(54px,calc((82cqh - 140px) / 1.52),104px);--dw:calc(var(--cw) * .88)}
+  .wstatus{gap:4px}.wstatus .srow{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;min-height:46px}
+  .wstatus .actions{padding:0;min-height:0}
+  .wstatus .lastmove{margin:0;min-height:1.3em;max-width:60ch}
+  .game-main>.center{flex:1 0 auto}
+  .seat{width:100px}.seat .av{width:54px;height:54px;font-size:22px}.seat .nm{font-size:14px;max-width:100px}.seat .sub{font-size:12px}.ring-center .piles{gap:32px}
+}
+/* laptops with short screens: tighten everything so the ring, the turn line and the hand all fit without scrolling */
+@media (min-width:1024px) and (max-height:820px){
+  .ringwrap{min-height:250px;margin:18px auto 30px}
+  .ring-center{gap:6px}.ring-center .piles{gap:22px}
+  .seat .av{width:44px;height:44px;font-size:18px}.seat{gap:1px}
+  .handwrap{margin:0 28px 12px}.hand{padding-top:14px}
+  .status{min-height:0;gap:4px}.status .hint2{max-width:60ch;font-size:13px}
+}
 
 /* ---------- sheets ---------- */
 .sheet{position:fixed;inset:0;z-index:40;background:rgba(3,10,16,.6);display:flex;align-items:flex-end;justify-content:center}
@@ -344,7 +359,8 @@ h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
 #toasts{position:fixed;left:0;right:0;top:64px;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:60;pointer-events:none;padding:0 16px}
 body.in-game #toasts{top:58px}
 body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
-@media (min-width:1024px){body.in-game #toasts{top:76px;right:360px}}
+/* on a computer, move updates sit top-left of the table so they never cover the player sitting at the top of the ring */
+@media (min-width:1024px){body.in-game #toasts{top:84px;right:auto;left:24px;align-items:flex-start;padding:0;max-width:300px}body.in-game .toast{text-align:left}}
 .toast{background:var(--ink);color:#14212c;padding:9px 14px;border-radius:12px;font-weight:600;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.35);max-width:440px;text-align:center;animation:drop .25s ease-out}
 .toast.call,.toast.catch{background:var(--red);color:#fff}
 .toast.win{background:var(--gold);color:var(--gold-ink)}

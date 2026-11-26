@@ -110,9 +110,9 @@ function cardHTML(c, o) {
   o = o || {};
   const col = cc(c), v = cv(c), wild = col === 'w', lab = label(c), tag = o.tag || 'div', ul = v === '6' || v === '9' ? ' ul' : '';
   const mid = wild ? (v === 'F' ? '+4' : '') : lab;
-  return `<${tag} class="card ${o.cls || ''}${col === 'y' ? ' inky' : ''}" style="--w:${o.w || 64}px;--c:${CVAR[col]}" ${o.attrs || ''} aria-label="${esc(o.aria || cardName(c))}"><span class="face"><span class="ring ${wild ? 'ring-wild' : ''}"></span><span class="mid${wild ? ' mid-wild' : ''}${ul}">${esc(mid)}</span>${wild && v !== 'F' ? '<span class="corner tl"><i class="wdot"></i></span><span class="corner br"><i class="wdot"></i></span>' : `<span class="corner tl${ul}">${esc(lab)}</span><span class="corner br${ul}">${esc(lab)}</span>`}</span></${tag}>`;
+  return `<${tag} class="card ${o.cls || ''}${col === 'y' ? ' inky' : ''}" style="--w:${typeof o.w === 'string' ? o.w : (o.w || 64) + 'px'};--c:${CVAR[col]}" ${o.attrs || ''} aria-label="${esc(o.aria || cardName(c))}"><span class="face"><span class="ring ${wild ? 'ring-wild' : ''}"></span><span class="mid${wild ? ' mid-wild' : ''}${ul}">${esc(mid)}</span>${wild && v !== 'F' ? '<span class="corner tl"><i class="wdot"></i></span><span class="corner br"><i class="wdot"></i></span>' : `<span class="corner tl${ul}">${esc(lab)}</span><span class="corner br${ul}">${esc(lab)}</span>`}</span></${tag}>`;
 }
-function backHTML(w, cls) { return `<div class="card back ${cls || ''}" style="--w:${w}px"><span class="face"><span class="ring"></span><span class="wordmark">Last<br>Card</span></span></div>`; }
+function backHTML(w, cls) { return `<div class="card back ${cls || ''}" style="--w:${typeof w === 'string' ? w : w + 'px'}"><span class="face"><span class="ring"></span><span class="wordmark">Last<br>Card</span></span></div>`; }
 
 /* ---------- server calls ---------- */
 function send(ev, data, quiet) {
@@ -672,7 +672,7 @@ function onState(s) {
   const prev = G; G = s; G.clockSkew = Date.now() - s.now;
   if (!prev) renderChat(); // names in chat history need the player list
   const lg = (G.log || []).slice(-1)[0];
-  if (view === 'game' && seenV >= 0 && lg && lg.v > seenV && (isWide() || ['call', 'catch', 'win'].includes(lg.kind))) toast(fmt(lg.msg), lg.kind);
+  if (view === 'game' && seenV >= 0 && lg && lg.v > seenV && ['call', 'catch', 'win'].includes(lg.kind)) toast(fmt(lg.msg), lg.kind);
   seenV = G.v || 0;
   const mine = G.status === 'playing' && G.order[G.turn] === G.me;
   const wasMine = prev && prev.status === 'playing' && prev.order[prev.turn] === prev.me && prev.round === G.round;
@@ -830,15 +830,13 @@ function renderTable() {
   const playable = myTurn ? hand.filter((c, i) => (!G.drew || i === hand.length - 1) && canPlay(c, R)).length : 0;
   const wide = isWide(), small = window.innerHeight < 760;
   if (!wide) { renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }); return; }
-  const cw = wide ? 104 : small ? 62 : 72, dw = wide ? 92 : small ? 54 : 62;
-  const ring = ringHTML(cw, dw, myTurn);
+  const ring = ringHTML(myTurn);
   lastTopV = G.v; flipRing = false;
   $('#gMain').innerHTML = `
     <div class="center" style="gap:8px;padding-top:4px">
       ${ring}
-      <div class="status" role="status" style="min-height:0">${pill}<span class="hint2">${esc(hint)}</span></div>
+      <div class="status wstatus" style="min-height:0"><div class="srow" role="status">${pill}<div class="actions" id="actions"></div></div><span class="hint2">${esc(hint)}</span><p class="lastmove" aria-live="polite">${esc(lastMoveText())}</p></div>
     </div>
-    <div class="actions" id="actions"></div>
     ${seated ? `<div class="handwrap" id="handwrap"><div class="handlabel"><span>Your hand · ${hand.length}</span><span id="swipeHint">${myTurn && G.status === 'playing' ? `<span class="play">${playable} playable</span>` : G.wins[meId] ? G.wins[meId] + '★ wins' : ''}</span></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
       : watchPanelHTML()}
     ${G.status === 'over' && !G.admin ? overHTML() : ''}`;
@@ -1090,7 +1088,9 @@ function updateHandEdges() {
 let handOrder = [], flipRing = false, revMark = null, qAdvance = false, fxFlying = false, lastTap = null;
 /* Seats sit on an ellipse in play order, you at the bottom. Seats never move when play reverses;
    only the flow of the ring and the arrow towards the next player change direction. */
-function ringHTML(cw, dw, myTurn) {
+// On a computer the ring fills whatever height is left between the header and your hand (CSS),
+// and the cards in the middle size themselves to the ring so no seat ever sits on top of them.
+function ringHTML(myTurn) {
   const n = G.order.length, mi = G.order.indexOf(G.me), base = mi < 0 ? 0 : mi;
   const playing = G.status === 'playing', curU = G.order[G.turn];
   const nextU = playing ? G.order[mod(G.turn + (G.dir || 1), n)] : null;
@@ -1119,10 +1119,10 @@ function ringHTML(cw, dw, myTurn) {
     <div class="ring-center">
       ${revTag ? '<span class="revtag">⇄ Direction reversed</span>' : ''}
       <div class="piles">
-        <button class="drawpile ${myTurn && !G.drew ? 'can' : ''}" id="drawPile" aria-label="Draw a card${isWide() ? ' (D)' : ''}, ${G.deckCount} left" style="width:${dw + 6}px;height:${Math.round(dw * 1.52) + 6}px">${backHTML(dw, 'shadow')}${backHTML(dw)}</button>
+        <button class="drawpile ${myTurn && !G.drew ? 'can' : ''}" id="drawPile" aria-label="Draw a card${isWide() ? ' (D)' : ''}, ${G.deckCount} left" style="width:calc(var(--dw) + 6px);height:calc(var(--dw) * 1.52 + 6px)">${backHTML('var(--dw)', 'shadow')}${backHTML('var(--dw)')}</button>
         <div class="discard-wrap">
           ${G.pending > 0 ? `<span class="stackb">+${G.pending}</span>` : ''}
-          <div class="discard" style="--cur:${cur}">${top ? cardHTML(top, { w: cw, cls: lastTopV !== G.v && !fxFlying ? 'pop' : '' }) : ''}</div>
+          <div class="discard" style="--cur:${cur}">${top ? cardHTML(top, { w: 'var(--cw)', cls: lastTopV !== G.v && !fxFlying ? 'pop' : '' }) : ''}</div>
         </div>
       </div>
       <span class="dirlbl"><span class="curcol" style="--cur:${cur}"><i></i>${COLORS[G.color] || ''}</span>· ${G.dir === 1 ? '↻ clockwise' : '↺ anticlockwise'}</span>
@@ -1138,7 +1138,7 @@ function renderHand(hand, myTurn, prevScroll, R) {
     idx = ok.concat(idx.filter((i) => !ok.includes(i)));
   }
   handOrder = idx;
-  const wide = isWide(), w = wide ? 88 : window.innerWidth < 370 || window.innerHeight < 760 ? 70 : 80;
+  const wide = isWide(), w = wide ? (window.innerHeight < 820 ? 74 : 88) : window.innerWidth < 370 || window.innerHeight < 760 ? 70 : 80;
   el.innerHTML = idx.map((i, k) => {
     const c = hand[i]; let cls = '';
     const ok = myTurn && G.status === 'playing' && (!G.drew || i === hand.length - 1) && canPlay(c, R);
