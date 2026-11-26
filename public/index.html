@@ -600,6 +600,13 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 .iw-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .iw-btns .btn{min-height:48px;border-radius:14px;font-weight:800}
 #iwKeep{background:#14212c;color:var(--ink)}#iwLeave{background:transparent;color:#14212c;border:1.5px solid rgba(20,33,44,.3)}
+.lv-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px;font-size:15px;line-height:1.4;color:var(--soft)}
+.lv-list li{display:flex;gap:10px}.lv-list svg{flex:none;color:var(--green-ok,#3ddc84)}
+.lv-opt{display:flex;gap:14px;width:100%;padding:14px;border-radius:18px;background:var(--panel);border:1.5px solid var(--line);text-align:left;color:var(--ink)}
+.lv-opt .ic{width:44px;height:44px;flex:none;border-radius:14px;display:grid;place-items:center;background:var(--gold-wash);color:var(--gold)}
+.lv-opt .tx{display:flex;flex-direction:column;gap:4px}.lv-opt b{font-size:16px}.lv-opt .tx span{font-size:14px;line-height:1.4;color:var(--soft)}
+.lv-opt.out{background:rgba(255,138,127,.08);border-color:rgba(255,138,127,.55)}.lv-opt.out .ic{background:rgba(255,138,127,.16);color:#ff8a7f}.lv-opt.out b{color:#ffb4ad}
+.btn.leave-red{background:#ff8a7f;color:#2b0d0a;border-color:transparent}
 .fxl{position:fixed;z-index:45;pointer-events:none;display:grid;place-items:center}
 .fx-shock{border-radius:50%;border:5px solid var(--gold);box-sizing:border-box}
 .fx-wash{border-radius:50%;background:radial-gradient(circle,var(--wc) 0%,var(--wc) 35%,transparent 70%)}
@@ -872,6 +879,11 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
     <button class="btn danger block" id="menuEnd" hidden>End game for everyone</button>
     <p class="note" id="menuEndNote" hidden></p>
   </div>
+</div>
+
+<!-- leaving the table -->
+<div class="sheet" id="leaveSheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="lvTitle" id="leaveCard"></div>
 </div>
 
 <!-- practice vs computer -->

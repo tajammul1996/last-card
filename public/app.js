@@ -131,7 +131,7 @@ function send(ev, data, quiet) {
 }
 
 /* ---------- screens + routing ---------- */
-const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall'];
+const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet'];
 function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#' + id).hidden = true; $('#reactPop').hidden = true; }
 function show(v) {
   if (v !== 'game' && practice) endPractice();
@@ -311,7 +311,7 @@ socket.on('idleWarn', (m) => {
   $('#idleWarn').hidden = false; buzz();
 });
 $('#iwKeep').onclick = () => { hideIdle(); send('keepOpen', {}, true); };
-$('#iwLeave').onclick = () => { hideIdle(); $('#menuLeave').click(); };
+$('#iwLeave').onclick = () => { hideIdle(); leaveNow(); };
 
 socket.on('left', (m) => { if (m && m.code === curCode) { toast('You were removed from the table'); curCode = null; G = null; setHash(''); showHome(); } });
 socket.on('react', (m) => { if (m && m.code === curCode && view === 'game' && ['😂', '😱', '😤', '👏'].includes(m.e)) floatEmoji(m.e, m.by); });
@@ -601,7 +601,43 @@ async function goHomeKeepSeat() {
 $('#menuBtn').onclick = () => { closeSheets(); menuOpen = null; renderMenu(); $('#menu').hidden = false; };
 $('#menuHome').onclick = goHomeKeepSeat;
 $('#menuBoard').onclick = () => { closeSheets(); showBoard('game'); };
-$('#menuLeave').onclick = async () => { closeSheets(); const code = curCode; curCode = null; G = null; last = null; await send('leave', {}, true); toast('You left table ' + code); showHome(); };
+async function leaveNow() { closeSheets(); hideIdle(); const code = curCode; curCode = null; G = null; last = null; await send('leave', {}, true); toast('You left table ' + code); showHome(); }
+// Leaving always asks first. Mid-round you can take a break instead (keep your seat; your turns get skipped).
+const LV_ICON = {
+  ok: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-11"/></svg>',
+  out: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 17l-5-5 5-5M5 12h11M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/></svg>',
+  pause: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8h1a4 4 0 0 1 0 8h-1M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4zM6 1v3M10 1v3M14 1v3"/></svg>',
+};
+function openLeave() {
+  if (!G || G.practice) { leaveNow(); return; }
+  closeSheets();
+  const seated = G.order.includes(G.me), others = G.players.filter((p) => p.id !== G.me);
+  const nextHost = isHost() && others.length ? (G.order.filter((u) => u !== G.me).find((u) => isOnline(u)) || others[0].id) : null;
+  const hostLine = nextHost ? `<p class="note" style="text-align:center;margin:0">${esc(nameOf(nextHost))} becomes the host.</p>` : '';
+  const close = '<button class="iconbtn sheet-close" data-close="leaveSheet" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+  if (G.status === 'playing' && seated) {
+    const n = count(G.me), lastTwo = G.order.length === 2;
+    $('#leaveCard').innerHTML = `<span class="grab" aria-hidden="true"></span>${close}
+      <div><h2 id="lvTitle">Round ${G.round || 1} is still going</h2><p class="note" style="margin:4px 0 0">You have ${n} card${n === 1 ? '' : 's'}. What would you like to do?</p></div>
+      <button class="lv-opt" id="lvBreak" type="button"><span class="ic">${LV_ICON.pause}</span><span class="tx"><b>Take a break</b><span>Keep your seat and cards. Your turns are skipped until you’re back.</span></span></button>
+      <button class="lv-opt out" id="lvGo" type="button"><span class="ic">${LV_ICON.out}</span><span class="tx"><b>Leave the table</b><span>${lastTwo ? `${esc(nameOf(G.order.find((u) => u !== G.me)))} is the last one left, so they win this round.` : 'Your cards go back in the deck and the round carries on without you. It doesn’t count as a loss.'}</span></span></button>
+      <button class="btn light block" data-close="leaveSheet" style="min-height:52px">Keep playing</button>${hostLine}`;
+  } else {
+    $('#leaveCard').innerHTML = `<span class="grab" aria-hidden="true"></span>${close}
+      <h2 id="lvTitle">Leave table ${esc(G.code || curCode)}?</h2>
+      <ul class="lv-list">
+        ${G.round ? `<li>${LV_ICON.ok}Your wins stay on the leaderboard.</li>` : ''}
+        ${others.length ? `<li>${LV_ICON.ok}The others ${G.status === 'lobby' ? 'can still play' : 'keep playing'} without you.</li>` : `<li>${LV_ICON.ok}You’re the only one here, so the table closes.</li>`}
+        ${others.length ? `<li>${LV_ICON.ok}Changed your mind? The same link brings you back while the table is open.</li>` : ''}
+      </ul>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn" data-close="leaveSheet" style="min-height:54px">Stay</button><button class="btn leave-red" id="lvGo" style="min-height:54px">Leave</button></div>${hostLine}`;
+  }
+  $('#leaveSheet').hidden = false;
+  const go = $('#lvGo'); if (go) go.onclick = leaveNow;
+  const br = $('#lvBreak'); if (br) br.onclick = goHomeKeepSeat;
+  setTimeout(() => { const f = $('#leaveCard .lv-opt, #leaveCard [data-close]'); if (f) f.focus({ preventScroll: true }); }, 0);
+}
+$('#menuLeave').onclick = openLeave;
 $('#soundBtn').onclick = () => { Snd.on = !Snd.on; store('lc-sound', Snd.on ? 'on' : 'off'); $('#soundBtn').setAttribute('aria-pressed', String(Snd.on)); if (Snd.on) Snd.play('turn'); };
 $('#reactBtn').onclick = () => { const p = $('#reactPop'); p.hidden = !p.hidden; $('#reactBtn').setAttribute('aria-expanded', String(!p.hidden)); };
 $('#reactPop').addEventListener('click', (e) => { const b = e.target.closest('[data-e]'); if (b) { send('react', { e: b.dataset.e }); $('#reactPop').hidden = true; } });
@@ -627,8 +663,8 @@ function renderMenu() {
     $('#alertNote').textContent = perm === 'denied' ? 'Blocked in your browser settings for this site.' : 'A notification when it’s your turn and the app is closed.';
   }
   $('#menuBoard').hidden = pr; $('#menuLeave').hidden = pr;
-  $('#menuHome').textContent = pr ? 'End practice' : 'Back to home';
-  $('#menuHomeNote').textContent = pr ? 'Practice games don’t count on the leaderboard.' : 'Back to home keeps your seat. Leave table gives it up.';
+  $('#menuHome').textContent = pr ? 'End practice' : 'Back home';
+  $('#menuHomeNote').textContent = pr ? 'Practice games don’t count on the leaderboard.' : 'Home keeps your seat while you’re away. Leave table gives it up.';
   $('#soundBtn').setAttribute('aria-pressed', String(Snd.on));
   $('#menuNote').textContent = host ? 'You’re the host: you deal each round and can remove players.' : 'You can remove players who have gone offline so the game keeps moving.';
   const canEnd = !pr && (host || !isOnline(G.host));
@@ -775,6 +811,7 @@ function renderLobby() {
   wireClaim();
 }
 function wireOver() {
+  const ol = $('#overLeave'); if (ol) ol.onclick = openLeave;
   const ps = $('#prSetup'); if (ps) ps.onclick = () => openPracticeSetup();
   const ph = $('#prHome'); if (ph) ph.onclick = () => { endPractice(); showHome(); };
   const ay = $('#alertYes'); if (ay) ay.onclick = async () => { store('lc-push-asked', '1'); $('#alertAsk').remove(); const ok = await enablePush(); toast(ok ? 'Turn alerts are on' : 'Alerts are off. You can turn them on from the menu.'); };
@@ -794,7 +831,7 @@ function watchPanelHTML() {
 }
 function wireWatchPanel() {
   const c = $('#wpChat'); if (c) c.onclick = () => (isWide() ? $('#chatInp').focus() : openChat());
-  const l = $('#wpLeave'); if (l) l.onclick = () => $('#menuLeave').click();
+  const l = $('#wpLeave'); if (l) l.onclick = openLeave;
   const ab = $('#wpAdmBack'); if (ab) ab.onclick = () => showAdmin();
   const nx = $('#wpNext'); if (nx) nx.onclick = () => adminNext();
 }
@@ -1253,6 +1290,7 @@ function overHTML() {
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
     ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal round ${(G.round || 1) + 1}</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
       : `${isOnline(G.host) ? `<p class="note" style="text-align:center;color:var(--soft)">Waiting for <b style="color:var(--ink)">${esc(nameOf(G.host))}</b> (host) to deal the next round</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="nudgeBtn">Nudge ${esc(nameOf(G.host))}</button><button class="btn light" id="overBoard">Leaderboard</button></div>` : `${hostWaitHTML('deal')}<button class="btn" id="overBoard">Leaderboard</button>`}`}
+    <button class="btn danger-line block" id="overLeave" style="min-height:50px">${LV_ICON.out.replace('width="22" height="22"', 'width="18" height="18"')} Leave table</button>
   </div></div>`;
 }
 
