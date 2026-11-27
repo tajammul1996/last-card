@@ -350,7 +350,7 @@ function startAnalytics(cfg) {
   s.onload = () => {
     const p = window.posthog; if (!p || !p.init) return;
     p.init(cfg.key, {
-      api_host: cfg.host, autocapture: false, capture_pageview: false, capture_pageleave: false, disable_surveys: true,
+      api_host: cfg.host, autocapture: false, capture_pageview: true, capture_pageleave: false, // one page view per load, so PostHog's setup check and web analytics see the app disable_surveys: true,
       persistence: 'localStorage', person_profiles: 'always', bootstrap: { distinctID: cfg.deviceId },
       session_recording: { maskAllInputs: true, maskTextSelector: PH_MASK },
       loaded: (x) => { ph = x; phSuper(); phWho(); phQueue.splice(0).forEach(([e, pr]) => track(e, pr)); },
