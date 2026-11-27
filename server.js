@@ -517,7 +517,7 @@ io.on('connection', (socket) => {
         const others = [...t.players.values()].filter((x) => x.id !== seat.id).sort((a, b) => a.joined - b.joined).map((x) => x.name);
         const host = t.players.get(s.host);
         return { code, status: s.status, round: s.round || 0, yourTurn: s.status === 'playing' && s.order[s.turn] === seat.id,
-          players: others, host: host ? host.name : null, isHost: s.host === seat.id };
+          players: others, host: host ? host.name : null, isHost: s.host === seat.id, mine: !!(socket.data.account && t.home === socket.data.account.key) };
       }
     }
     return null;

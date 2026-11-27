@@ -142,6 +142,9 @@ function show(v) {
   view = v;
   document.body.classList.toggle('in-game', v === 'game');
   for (const id of ['home', 'invite', 'board', 'game', 'admin', 'feedback']) $('#' + id).hidden = id !== v;
+  const tabs = v === 'home' || v === 'board';
+  $('#tabbar').hidden = !tabs; document.body.classList.toggle('has-tabs', tabs);
+  if (v === 'board') paintTabs('rank');
   if (v !== 'game') { closeSheets('signin'); $('#chat').classList.remove('open'); }
   window.scrollTo(0, 0);
 }
@@ -156,6 +159,7 @@ function route() {
   else if (location.hash === '#leaderboard') showBoard(view === 'game' ? 'game' : 'home');
   else if (location.hash === '#admin' && me && me.admin) showAdmin();
   else if (location.hash === '#feedback' && me) showFeedback('home');
+  else if (location.hash === '#you') showHome('you');
   else showHome();
 }
 window.addEventListener('hashchange', route);
@@ -311,6 +315,7 @@ function finishSignIn(r) {
   toast(r.created ? `Welcome, ${r.name}! After a round, add your email to keep your wins.` : r.newPin ? `New PIN saved. Welcome back, ${r.name}!` : `Signed in as ${r.name}`);
   const then = afterSignIn; afterSignIn = null;
   if (then) then(); else rerender();
+  if (!r.created) maybeAskOnOpen();
 }
 $('#siBody').addEventListener('input', (e) => {
   if (e.target.id === 'siName') { authName = e.target.value; clearTimeout(checkTimer); checkTimer = setTimeout(liveCheck, 350); }
@@ -336,7 +341,7 @@ function openSignIn(then) {
   if (me) {
     $('#siTitle').textContent = 'Your account';
     $('#siBody').innerHTML = `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name)}<span class="tx">Signed in as<b>${esc(me.name)}</b></span></div>
-      ${me.protect === 'none' ? `<div class="keep-card"><span class="t"><b>Keep @${esc(me.name)} yours</b><span>${emailOn ? 'Add your email to sign in on any phone.' : 'Pick a PIN to sign in on another phone.'}</span></span><button type="button" class="btn sm light" id="keepBtn">${emailOn ? 'Add email' : 'Pick a PIN'}</button></div>` : `<p class="note" style="margin:0">${me.protect === 'email' ? 'Signs in with a code to your email.' : 'Signs in with your PIN.'}${me.protect === 'pin' && emailOn ? ' <button type="button" class="linkbtn" id="keepBtn" style="min-height:0">Add an email</button>' : ''}</p>`}
+      ${needsKeep() ? `<div class="keep-card"><span class="t"><b>Keep @${esc(me.name)} yours</b><span>${emailOn ? 'Add your email to sign in on any phone.' : 'Pick a PIN to sign in on another phone.'}</span></span><button type="button" class="btn sm light" id="keepBtn">${emailOn ? 'Add email' : 'Pick a PIN'}</button></div>` : `<p class="note" style="margin:0">${me.protect === 'email' ? 'Signs in with a code to your email.' : 'Signs in with your PIN.'}</p>`}
       <p class="note">Wins from every game you finish signed in go on the leaderboard.</p>`;
     const kb = $('#keepBtn'); if (kb) kb.onclick = () => openKeep('account');
     $('#siGo').hidden = false; $('#siGo').textContent = 'Switch to another name';
@@ -449,6 +454,7 @@ socket.on('connect', async () => {
   syncPush(); loadFb();
   if (adminWatching && me && me.admin) adminWatch(adminWatching);
   else if (!practice) route();
+  maybeAskOnOpen();
 });
 socket.on('disconnect', () => { setTimeout(() => { if (!socket.connected) $('#conn').hidden = false; }, 1500); });
 socket.on('connect_error', () => {
@@ -529,8 +535,18 @@ $('#reloadBtn').onclick = () => location.reload();
 /* ---------- home ---------- */
 $('#acctBtn').onclick = () => { if (!me && view === 'home' && $('#homeAuthSlot #siName')) $('#siName').focus(); else openSignIn(); };
 async function refreshLast() { const r = await send('hello', { token, session, installed: isStandalone() }, true); if (r.ok) last = r.last || null; }
-function showHome() {
-  show('home'); setHash('');
+let homeTab = 'play';
+function paintTabs(tab) { $$('#tabbar a').forEach((a) => { if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }); }
+$('#tabbar').addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-tab]'); if (!a) return; e.preventDefault();
+  if (a.dataset.tab === 'rank') showBoard('home'); else showHome(a.dataset.tab);
+});
+function showHome(tab) {
+  homeTab = tab === 'you' ? 'you' : 'play';
+  show('home'); setHash(homeTab === 'you' ? 'you' : '');
+  paintTabs(homeTab);
+  $('#homePlay').hidden = homeTab !== 'play'; $('#homeYou').hidden = homeTab !== 'you';
+  if (homeTab === 'you') paintYou();
   const ab = $('#acctBtn');
   if (me) { ab.className = 'acct'; ab.innerHTML = avatarFor(me.name.toLowerCase(), me.name) + esc(me.name); ab.setAttribute('aria-label', 'Your account, ' + me.name); }
   else { ab.className = 'acct out'; ab.textContent = 'Sign in'; ab.removeAttribute('aria-label'); }
@@ -544,7 +560,7 @@ function showHome() {
   if (!me) { $('#homeAuthSlot').appendChild($('#siForm')); renderAuth(); }
   else if (!$('#signin').contains($('#siForm'))) $('#siTitle').after($('#siForm'));
   const box = $('#rejoinBox');
-  if (last && me) {
+  if (last && me && !last.mine) {
     const others = (last.players || []).filter((n) => n !== me.name);
     const chip = last.status === 'playing' ? (last.yourTurn ? 'Your turn' : `Round ${last.round || 1}`) : last.status === 'over' ? 'Round over' : 'In the lobby';
     const sub = others.length ? (last.status === 'playing' ? `Round ${last.round || 1} with ` : 'With ') + listNames(others.slice(0, 3)) + (others.length > 3 ? ` and ${others.length - 3} more` : '') : 'Just you so far';
@@ -640,9 +656,74 @@ function shareText(host, link) { return `${host}’s Last Card table is open. Ta
 function waHref(text) { return 'https://wa.me/?text=' + encodeURIComponent(text); }
 function paintMyTable() {
   if (!me) return;
-  const link = myLink();
-  $('#myLink').innerHTML = esc(location.host) + '/t/<b>' + esc(me.slug || slugFor(me.name)) + '</b>';
+  const link = myLink(), open = !!(last && last.mine);
+  $('#myLink').innerHTML = esc(location.host) + '/t/<b>' + esc(me.slug || slugFor(me.name)) + '</b> · same link every time';
   $('#waBtn').href = waHref(shareText(me.name, link));
+  const st = $('#mtStatus'); st.classList.toggle('open', open);
+  st.lastElementChild.textContent = open ? (last.players && last.players.length ? `Open · ${last.players.length + 1} at the table` : 'Open · waiting for friends') : 'Closed';
+  $('#createLbl').textContent = open ? 'Go to your table' : 'Open table';
+  paintLastGame();
+}
+// your last game: the people you played with most recently, one tap from a rematch
+async function paintLastGame() {
+  const box = $('#lastGameBox');
+  if (!me || offline) { box.innerHTML = ''; return; }
+  const r = await send('mates', {}, true);
+  if (view !== 'home' || !r.ok || !r.list.length) { if (r.ok) box.innerHTML = ''; return; }
+  const top = r.list[0].last, group = r.list.filter((m) => top - m.last < 3 * 3600_000).slice(0, 5);
+  const here = new Set(last && last.players ? last.players : []);
+  if (group.every((m) => here.has(m.name))) { box.innerHTML = ''; return; }
+  const names = group.map((m) => m.name);
+  box.innerHTML = `<section class="lastgame" aria-labelledby="lgT">
+    <div class="lg-top"><h2 class="lg-h" id="lgT">Last game · ${esc(daysAgoText(top))}</h2>${group.some((m) => m.online) ? `<span style="font-size:13px;font-weight:700;color:var(--ok)">${group.filter((m) => m.online).length} online now</span>` : ''}</div>
+    <div class="lg-who"><span class="stack" aria-hidden="true">${group.slice(0, 3).map((m) => avatarFor(m.key, m.name)).join('')}</span><b>${esc(listNames(names.slice(0, 3)))}${names.length > 3 ? ` +${names.length - 3}` : ''}</b></div>
+    <button class="btn rematch block" id="rematchBtn">Rematch: open table and ping ${group.length === 1 ? esc(names[0]) : 'all ' + group.length}</button>
+  </section>`;
+  $('#rematchBtn').onclick = async () => {
+    const b = $('#rematchBtn'); b.disabled = true;
+    track('rematch_tapped', { people: group.length });
+    let n = 0; for (const m of group) { const x = await send('ping', { key: m.key }, true); if (x.ok) n++; }
+    if (await createTable('rematch')) toast(n ? `Pinged ${n === group.length ? 'everyone' : n}. They’ll get a buzz.` : 'Your table is open.');
+  };
+}
+const YI = {
+  fb: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
+  mail: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>',
+  code: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>',
+  bot: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg>',
+  book: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14zM20 17v4H6.5"/></svg>',
+  adm: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+};
+const CHEV_S = '<svg class="ychev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+function yRow(id, ic, t, sub, extra) { return `<button type="button" id="${id}"><span class="yi">${YI[ic]}</span><span class="yt"><b>${t}</b>${sub ? `<span>${sub}</span>` : ''}</span>${extra || ''}${CHEV_S}</button>`; }
+function paintYou() {
+  const box = $('#homeYou');
+  if (!me) {
+    box.innerHTML = `<div class="you-head"><span class="av lg">?</span><div><h1>Not signed in</h1><span>Pick a username to keep your wins.</span></div></div>
+      <button class="btn gold block" id="youSignIn" style="min-height:56px">Sign in or pick a username</button>
+      <nav class="you-list" aria-label="More">${yRow('youCode', 'code', 'Join with a code', 'For a friend’s 4-letter code')}${yRow('youPractice', 'bot', 'Practice vs computer', 'Any time, even offline')}${yRow('youRules', 'book', 'How to play', '2-minute rules')}</nav>`;
+  } else {
+    const how = me.protect === 'email' ? 'Signs in with an email code' : me.protect === 'pin' ? 'Signs in with a PIN' : 'Not protected yet';
+    box.innerHTML = `<div class="you-head">${avatarFor(me.name.toLowerCase(), me.name, { size: 'lg' })}<div><h1>${esc(me.name)}</h1><span>${how}</span></div></div>
+      <nav class="you-list" aria-label="You">
+        ${needsKeep() ? yRow('youEmail', 'mail', emailOn ? 'Add your email' : 'Pick a PIN', emailOn ? 'Sign in on any phone with a code' : 'So you can sign in on another phone', '<span class="ydot" aria-label="To do"></span>') : ''}
+        ${yRow('youFb', 'fb', 'Ideas & problems', fbUnread ? `${fbUnread} new repl${fbUnread === 1 ? 'y' : 'ies'}` : 'Tell the person who makes Last Card', fbUnread ? '<span class="ydot" aria-label="New"></span>' : '')}
+        ${yRow('youCode', 'code', 'Join with a code', 'For a friend’s 4-letter code')}
+        ${yRow('youPractice', 'bot', 'Practice vs computer', 'Any time, even offline')}
+        ${yRow('youRules', 'book', 'How to play', '2-minute rules')}
+        ${me.admin ? yRow('youAdmin', 'adm', 'Admin', 'Tables, numbers, messages') : ''}
+      </nav>
+      <button class="btn block" id="youSwitch" style="min-height:52px">Switch to another name</button>`;
+  }
+  const on = (id, fn) => { const el = $('#' + id); if (el) el.onclick = fn; };
+  on('youSignIn', () => openSignIn());
+  on('youEmail', () => openKeep('you'));
+  on('youFb', () => showFeedback('home'));
+  on('youCode', () => $('#joinOpen').click());
+  on('youPractice', () => openPracticeSetup());
+  on('youRules', () => { closeSheets(); $('#howto').hidden = false; });
+  on('youAdmin', () => showAdmin());
+  on('youSwitch', async () => { await switchUser(); openSignIn(); });
 }
 $('#inviteBtn').onclick = () => needSignIn(async () => { if (await createTable('invite')) openInviteSheet(); });
 $('#waBtn').onclick = (e) => {
@@ -1253,7 +1334,18 @@ function startReadyTick() {
 }
 
 // ---------- keep your username: add an email (or a PIN when email is off) ----------
-let keepLater = false, keepInfo = null;
+let keepLater = false, keepInfo = null, keepAskedOpen = false, keepRoundAsked = '';
+function needsKeep() { return !!me && (me.protect === 'none' || (emailOn && me.protect === 'pin')); }
+// ask once when the app opens (not mid-game); then after every finished round until they add one
+function maybeAskOnOpen() {
+  if (keepAskedOpen || !needsKeep() || view !== 'home' || curCode) return;
+  keepAskedOpen = true; setTimeout(() => { if (view === 'home' && needsKeep()) openKeep('open'); }, 900);
+}
+function maybeAskAfterRound() {
+  if (!G || G.practice || G.admin || G.status !== 'over' || !needsKeep() || !G.order.includes(G.me)) return;
+  const k = G.code + ':' + G.round; if (keepRoundAsked === k) return; keepRoundAsked = k;
+  setTimeout(() => { if (G && G.status === 'over' && needsKeep() && $('#keepSheet').hidden) openKeep('round_over'); }, 1600);
+}
 function openKeep(from) {
   track('keep_shown', { from, method: emailOn ? 'email' : 'pin' });
   closeSheets();
@@ -1262,10 +1354,12 @@ function openKeep(from) {
     const nm = esc(me.name);
     card.innerHTML = `<span class="grab" aria-hidden="true"></span>
       <button class="iconbtn sheet-close" data-close="keepSheet" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-      ${step === 'email' ? `<div class="who-big">${avatarFor(me.name.toLowerCase(), me.name, { size: 'lg' })}<div><h3 id="kpT">Keep @${nm} yours</h3><p>Your wins, on any phone.</p></div></div>
+      ${step === 'email' ? `<div class="who-big">${avatarFor(me.name.toLowerCase(), me.name, { size: 'lg' })}<div><h3 id="kpT">${from === 'round_over' ? 'Add your email?' : me.protect === 'pin' ? `Keep ${nm} safe` : `Keep @${nm} yours`}</h3><p>${from === 'round_over' ? 'Round done. Takes 10 seconds, then your wins follow you to any phone.' : me.protect === 'pin' ? 'Sign in on any phone with a code. Your name, wins and PIN all stay.' : 'Add your email so your wins follow you to any phone.'}</p></div></div>
         <form id="kpForm" style="display:flex;flex-direction:column;gap:12px"><label class="fld" for="kpEmail">Your email<input id="kpEmail" class="inp" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" maxlength="254"></label>
         <p class="note" style="margin:0">Only used to sign you in on a new phone. Never shown to other players. No newsletters.</p>
-        <p class="err" id="kpErr" role="alert"></p><button class="btn gold block" style="min-height:54px">Send me a code</button></form>`
+        <p class="err" id="kpErr" role="alert"></p><button class="btn gold block" style="min-height:54px">Send me a code</button>
+        <button type="button" class="linkbtn" id="kpLater" style="align-self:center;color:var(--soft)">Not now</button>
+        <p class="note" style="text-align:center;margin:-8px 0 0">${from === 'round_over' ? 'We’ll ask after each round until you add one.' : 'If you skip, we’ll ask again after your next round.'}</p></form>`
       : step === 'code' ? `<div><h3 id="kpT" style="font-size:24px;margin:0 0 6px">Check your email</h3><p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">We sent a 6-digit code to <b style="color:var(--ink)">${esc(keepInfo.to)}</b>. It works for 10 minutes.</p></div>
         <form id="kpForm" style="display:flex;flex-direction:column;gap:12px"><label class="fld" for="kpCode">6-digit code<input id="kpCode" class="inp pin-inp" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" placeholder="••••••"></label>
         <p class="err" id="kpErr" role="alert"></p><button class="btn gold block" style="min-height:54px">Confirm</button><button type="button" class="linkbtn" id="kpBack" style="align-self:center">Use a different email</button></form>`
@@ -1276,7 +1370,7 @@ function openKeep(from) {
         <button class="btn gold block" data-close="keepSheet" style="min-height:54px">Done</button>`}`;
     const f = $('#kpForm'); if (!f) return;
     const err = $('#kpErr');
-    if (step === 'email') { setTimeout(() => $('#kpEmail').focus(), 40); f.onsubmit = async (e) => {
+    if (step === 'email') { $('#kpLater').onclick = () => { track('keep_skipped', { from }); $('#keepSheet').hidden = true; }; setTimeout(() => $('#kpEmail').focus(), 40); f.onsubmit = async (e) => {
       e.preventDefault(); const b = f.querySelector('.btn.gold'); b.disabled = true;
       const r = await send('emailStart', { purpose: 'add', who: $('#kpEmail').value }, true); b.disabled = false;
       if (!r.ok) { err.textContent = r.error || 'Couldn’t send a code.'; return; }
@@ -1290,7 +1384,7 @@ function openKeep(from) {
         e.preventDefault(); const b = f.querySelector('.btn.gold'); b.disabled = true;
         const r = await send('emailVerify', { id: keepInfo.id, code: $('#kpCode').value }, true); b.disabled = false;
         if (!r.ok) { err.textContent = r.error || 'That code didn’t work.'; $('#kpCode').value = ''; return; }
-        me.protect = 'email'; paint('done'); if (G && G.status === 'over') render();
+        me.protect = 'email'; paint('done'); paintFbDots(); if (G && G.status === 'over') render(); else if (view === 'home') showHome(homeTab);
       };
     }
     if (step === 'pin') {
@@ -1308,6 +1402,7 @@ function openKeep(from) {
 }
 
 function wireOver() {
+  maybeAskAfterRound();
   const ko = $('#keepOpen'); if (ko) ko.onclick = () => openKeep('round_over');
   const rb = $('#readyBtn'); if (rb) rb.onclick = () => { const on = !(G.ready || []).includes(G.me); send('ready', { on }); };
   startReadyTick();
@@ -1794,8 +1889,8 @@ function overHTML() {
     <div class="over-head">${av(G.winner, 'md')}<div><p class="eyebrow">Round ${G.round || 1} is over</p><h2 id="winT">${G.winner === G.me ? 'You win!' : esc(nameOf(G.winner)) + ' wins!'}</h2></div></div>
     ${rec ? `<div class="gold-box" style="display:flex;align-items:center;gap:10px;font-size:14px">${ICON.trophy}<span>+1 win for ${G.winner === G.me ? 'you' : esc(nameOf(G.winner))}${rec.rank ? ` · now <b>#${rec.rank}</b> on the leaderboard` : ''}</span></div>` : ''}
     ${chatPeekHTML()}
-    ${me && me.protect === 'none' && !keepLater ? `<div class="keep-card" id="keepCard"><span class="t"><b>Keep @${esc(me.name)} yours</b><span>${emailOn ? 'Add your email so your wins follow you to any phone.' : 'Pick a PIN so you can sign in on another phone.'}</span></span><button class="btn sm light" id="keepOpen">${emailOn ? 'Add email' : 'Pick a PIN'}</button></div>` : ''}
-    ${askAlerts && !(me && me.protect === 'none' && !keepLater) ? `<div class="alert-ask" id="alertAsk"><span class="t"><b>Get a nudge on your turn?</b><span>Only for your turn and round results.</span></span><button class="btn sm" id="alertNo">Not now</button><button class="btn sm light" id="alertYes">Turn on</button></div>` : ''}
+    ${false ? `<div class="keep-card" id="keepCard"><span class="t"><b>Keep @${esc(me.name)} yours</b><span>${emailOn ? 'Add your email so your wins follow you to any phone.' : 'Pick a PIN so you can sign in on another phone.'}</span></span><button class="btn sm light" id="keepOpen">${emailOn ? 'Add email' : 'Pick a PIN'}</button></div>` : ''}
+    ${askAlerts && !needsKeep() ? `<div class="alert-ask" id="alertAsk"><span class="t"><b>Get a nudge on your turn?</b><span>Only for your turn and round results.</span></span><button class="btn sm" id="alertNo">Not now</button><button class="btn sm light" id="alertYes">Turn on</button></div>` : ''}
     ${readyHTML()}
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${isHost() ? '<button class="btn" id="endBtn">End game</button>' : ''}<button class="btn light" id="overBoard" ${isHost() ? '' : 'style="grid-column:1/-1"'}>Leaderboard</button></div>
@@ -1823,6 +1918,7 @@ function whenText(t) {
 function paintFbDots() {
   const on = fbUnread > 0;
   $('#fbBtn').hidden = !me; $('#fbDot').hidden = !on; $('#menuFbDot').hidden = !on;
+  $('#youDot').hidden = !(on || needsKeep());
   const md = $('#menuBtnDot'); if (md) md.hidden = !on;
   $('#fbBtn').setAttribute('aria-label', on ? `Feedback, ${fbUnread} new repl${fbUnread === 1 ? 'y' : 'ies'}` : 'Feedback');
 }
