@@ -1220,6 +1220,34 @@ function renderLobby() {
   const sb = $('#startBtn'); if (sb) sb.onclick = () => send('start');
   wireClaim();
 }
+// ---------- ready-up: everyone taps in, the round deals itself ----------
+let readyTick = null, clockSkew = 0;
+function readyStatus() {
+  const ready = G.ready || [], n = ready.length, all = G.players.filter((p) => p.online).length;
+  if (G.dealAt) { const s = Math.max(0, Math.ceil((G.dealAt - (Date.now() + clockSkew)) / 1000)); return { t: s > 0 ? `Dealing in ${s}s` : 'Dealing…', hot: true }; }
+  if (n >= 1) return { t: `${n} of ${all} in · needs 2`, hot: false };
+  return { t: 'Tap in for the next round', hot: false };
+}
+function readyHTML() {
+  const ready = new Set(G.ready || []), mine = ready.has(G.me), st = readyStatus();
+  const ppl = G.players.slice(0, 8).map((p) => `<span class="rd-p ${ready.has(p.id) ? 'in' : ''} ${p.online ? '' : 'off'}">${av(p.id, 'sm')}${ready.has(p.id) ? '<i class="rd-tick" aria-label="in"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg></i>' : ''}<em>${p.id === G.me ? 'You' : esc(p.name)}</em></span>`).join('');
+  return `<section class="ready-box" aria-labelledby="rdT">
+    <div class="rd-top"><h3 id="rdT">Round ${(G.round || 1) + 1}</h3><span id="rdStatus" class="${st.hot ? 'hot' : ''}" role="status">${esc(st.t)}</span></div>
+    <div class="rd-ppl">${ppl}</div>
+    <button class="btn ${mine ? 'rd-on' : 'gold'} block" id="readyBtn" style="min-height:56px;font-size:17px" aria-pressed="${mine}">${mine ? 'You’re in · tap to wait' : 'I’m in, deal me'}</button>
+    ${isHost() && G.players.length >= 2 ? '<button class="linkbtn" id="nextBtn" style="align-self:center;color:var(--soft)">Deal now without waiting</button>' : ''}
+  </section>`;
+}
+function startReadyTick() {
+  clearInterval(readyTick); readyTick = null;
+  if (!G || G.status !== 'over' || G.practice) return;
+  if (G.now) clockSkew = G.now - Date.now();
+  readyTick = setInterval(() => {
+    const el = $('#rdStatus'); if (!el || !G || G.status !== 'over') { clearInterval(readyTick); readyTick = null; return; }
+    const st = readyStatus(); el.textContent = st.t; el.className = st.hot ? 'hot' : '';
+  }, 500);
+}
+
 // ---------- keep your username: add an email (or a PIN when email is off) ----------
 let keepLater = false, keepInfo = null;
 function openKeep(from) {
@@ -1277,6 +1305,8 @@ function openKeep(from) {
 
 function wireOver() {
   const ko = $('#keepOpen'); if (ko) ko.onclick = () => openKeep('round_over');
+  const rb = $('#readyBtn'); if (rb) rb.onclick = () => { const on = !(G.ready || []).includes(G.me); send('ready', { on }); };
+  startReadyTick();
   const ol = $('#overLeave'); if (ol) ol.onclick = openLeave;
   const ps = $('#prSetup'); if (ps) ps.onclick = () => openPracticeSetup();
   const ph = $('#prHome'); if (ph) ph.onclick = () => { endPractice(); showHome(); };
@@ -1754,9 +1784,9 @@ function overHTML() {
     ${chatPeekHTML()}
     ${me && me.protect === 'none' && !keepLater ? `<div class="keep-card" id="keepCard"><span class="t"><b>Keep @${esc(me.name)} yours</b><span>${emailOn ? 'Add your email so your wins follow you to any phone.' : 'Pick a PIN so you can sign in on another phone.'}</span></span><button class="btn sm light" id="keepOpen">${emailOn ? 'Add email' : 'Pick a PIN'}</button></div>` : ''}
     ${askAlerts && !(me && me.protect === 'none' && !keepLater) ? `<div class="alert-ask" id="alertAsk"><span class="t"><b>Get a nudge on your turn?</b><span>Only for your turn and round results.</span></span><button class="btn sm" id="alertNo">Not now</button><button class="btn sm light" id="alertYes">Turn on</button></div>` : ''}
+    ${readyHTML()}
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
-    ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal round ${(G.round || 1) + 1}</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
-      : `${isOnline(G.host) ? `<p class="note" style="text-align:center;color:var(--soft)">Waiting for <b style="color:var(--ink)">${esc(nameOf(G.host))}</b> (host) to deal the next round</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="nudgeBtn">Nudge ${esc(nameOf(G.host))}</button><button class="btn light" id="overBoard">Leaderboard</button></div>` : `${hostWaitHTML('deal')}<button class="btn" id="overBoard">Leaderboard</button>`}`}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">${isHost() ? '<button class="btn" id="endBtn">End game</button>' : ''}<button class="btn light" id="overBoard" ${isHost() ? '' : 'style="grid-column:1/-1"'}>Leaderboard</button></div>
     <button class="btn danger-line block" id="overLeave" style="min-height:50px">${LV_ICON.out.replace('width="22" height="22"', 'width="18" height="18"')} Leave table</button>
   </div></div>`;
 }

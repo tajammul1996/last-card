@@ -93,6 +93,16 @@ h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
 .keep-card{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:16px;border:1px dashed var(--gold-edge)}
 .keep-card .t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.keep-card .t b{font-size:15px}.keep-card .t span{font-size:13px;color:var(--muted)}
 .fixchip{align-self:flex-start;min-height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--gold-edge);color:var(--gold);font-weight:700;font-size:14px;margin-top:-4px}
+.ready-box{display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:18px;background:var(--fill)}
+.rd-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.rd-top h3{font-size:17px;font-family:var(--body)}
+#rdStatus{font-size:14px;font-weight:700;color:var(--muted)}#rdStatus.hot{color:var(--ok)}
+.rd-ppl{display:flex;gap:12px;flex-wrap:wrap}
+.rd-p{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;opacity:.55}
+.rd-p.in{opacity:1}.rd-p.off{opacity:.3}
+.rd-p em{font-style:normal;font-size:12px;color:var(--soft);max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rd-tick{position:absolute;top:20px;right:-4px;width:20px;height:20px;border-radius:999px;background:var(--online);color:#06281a;border:2px solid var(--panel);display:grid;place-items:center}
+.btn.rd-on{background:rgba(61,220,132,.15);color:var(--ok);border-color:transparent}
 /* ---------- shared ---------- */
 .screen{min-height:100%;display:flex;flex-direction:column}
 .wrap{width:100%;max-width:1240px;margin:0 auto;padding:0 20px}

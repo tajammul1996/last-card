@@ -260,6 +260,7 @@ function viewFor(t, pid) {
     color: s.color, top: s.discard[s.discard.length - 1] || null, pile: s.discard.length, deckCount: s.deck.length,
     counts, hand: (s.hands && s.hands[pid]) || [], unsafe: s.unsafe || null, turnAt: s.turnAt || 0,
     winner: s.winner || null, wins: s.wins || {}, log: (s.log || []).slice(-6), now: Date.now(),
+    ready: s.status === 'over' && t.ready ? [...t.ready].filter((id) => t.players.has(id)) : [], dealAt: s.status === 'over' ? t.dealAt || 0 : 0,
     home: t.home ? { slug: Accounts.slugOf(t.home), name: t.homeName || '' } : null,
     requests: pid === s.host && t.requests ? [...t.requests.entries()].map(([key, r]) => ({ key, name: r.name })) : [],
   };
@@ -303,6 +304,7 @@ function trackRounds(t) {
 const roundStat = (t, k) => { if (t.rs) t.rs[k] = (t.rs[k] || 0) + 1; };
 
 function broadcast(t, save = true) {
+  if (t.ready && t.ready.size) scheduleDeal(t);
   for (const p of t.players.values()) {
     for (const sid of p.sockets) io.to(sid).emit('state', viewFor(t, p.id));
   }
@@ -312,6 +314,32 @@ function broadcast(t, save = true) {
   }
   if (save) { markDirty(t); maybeAlert(t); trackRounds(t); }
 }
+// ---------- ready-up between rounds ----------
+// After a round everyone taps "I'm in". Once two are in, the next round deals itself READY_DEAL_MS later,
+// or almost at once when everyone online is in. Nobody waits on the host any more.
+const READY_DEAL_MS = Number(process.env.READY_DEAL_MS || 5000);
+function scheduleDeal(t) {
+  const now = Date.now();
+  const stop = () => { clearTimeout(t.dealTimer); t.dealTimer = null; t.dealAt = 0; };
+  if (t.s.status !== 'over' || tables.get(t.code) !== t) { stop(); if (t.s.status === 'playing') t.ready = null; return; }
+  const seated = seatedOrder(t);
+  const ready = [...(t.ready || [])].filter((id) => t.players.has(id));
+  if (ready.length < 2 || seated.length < 2) { stop(); return; }
+  const everyone = seated.filter((id) => isOnline(t.players.get(id))).every((id) => ready.includes(id));
+  const at = now + (everyone ? 1200 : READY_DEAL_MS);
+  if (t.dealTimer && t.dealAt <= at) return; // already counting down to something sooner
+  stop();
+  t.dealAt = at;
+  t.dealTimer = setTimeout(() => autoDeal(t), at - now);
+}
+function autoDeal(t) {
+  t.dealTimer = null; t.dealAt = 0;
+  if (tables.get(t.code) !== t || t.s.status !== 'over') return;
+  const seated = seatedOrder(t); if (seated.length < 2) return;
+  t.ready = null;
+  if (act(t, (s) => { if (s.status === 'playing') return false; E.dealRound(s, seated); })) Accounts.bumpStat('deals').catch(() => {});
+}
+
 function plainLog(t) {
   const lg = (t.s.log || []).slice(-1)[0];
   if (!lg) return '';
@@ -972,6 +1000,15 @@ io.on('connection', (socket) => {
     if (ok) Accounts.bumpStat('deals').catch(() => {});
     ack({ ok });
     if (ok && c.s.round === 1) alertAdmins('start', c.t).catch(() => {});
+  });
+  on('ready', ({ on: want }, ack) => {
+    const c = ctx(); if (!c) return ack({ ok: false });
+    if (c.s.status !== 'over') return ack({ ok: false, error: 'The round is still going.' });
+    c.t.ready = c.t.ready || new Set();
+    if (want === false) c.t.ready.delete(c.me); else c.t.ready.add(c.me);
+    if (want !== false) track('ready_tapped', { ready: c.t.ready.size, seated: seatedOrder(c.t).length });
+    broadcast(c.t, false);
+    ack({ ok: true });
   });
   // the host can close the table at any time (anyone can when the host has gone offline):
   // everyone sees the standings and goes home
