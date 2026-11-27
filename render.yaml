@@ -24,10 +24,10 @@ services:
       # POSTHOG_HOST: https://us.i.posthog.com (US) or https://eu.i.posthog.com (EU)
       - key: POSTHOG_KEY
         sync: false
-      # PUBLIC_HOST: https://us.i.posthog.com (US) or https://eu.i.posthog.com (EU)
-      - key: POSTHOG_KEY
-        sync: false
       - key: POSTHOG_HOST
+        sync: false
+      # Your own address, e.g. saylastcard.com. Once set, onrender.com visitors move there, still signed in.
+      - key: PUBLIC_HOST
         sync: false
 
   # Keeps every table saved while the game server redeploys or restarts.
