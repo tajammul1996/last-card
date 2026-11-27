@@ -29,6 +29,11 @@ services:
       # Your own address, e.g. saylastcard.com. Once set, onrender.com visitors move there, still signed in.
       - key: PUBLIC_HOST
         sync: false
+      # Email sign-in codes through Resend: the API key, and a sender on a domain verified there.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
 
   # Keeps every table saved while the game server redeploys or restarts.
   - type: keyvalue
