@@ -59,6 +59,8 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/healthz') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('ok'); }
   if (url.pathname === '/move.json') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(JSON.stringify({ to: PUBLIC_HOST })); }
   if (req.method === 'POST' && (url.pathname === '/handoff' || url.pathname === '/handoff/redeem')) return handoff(req, res, url.pathname);
+  if (/^\/t\/[^/]{1,60}\/?$/.test(url.pathname)) return servePersonal(req, res, url);
+  if (url.pathname === '/qr.svg') return serveQr(req, res, url);
   const file = url.pathname === '/' ? '/index.html' : url.pathname;
   const full = path.normalize(path.join(PUBLIC, file));
   if (!full.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
@@ -69,6 +71,37 @@ const server = http.createServer((req, res) => {
     res.end(data);
   });
 });
+
+// The app page with a link preview naming the player (WhatsApp, iMessage and others read these tags).
+// The words stay the same over time on purpose: chat apps cache previews, so nothing here goes stale.
+const escAttr = (x) => String(x).replace(/[&"<>]/g, (c) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' }[c]));
+async function servePersonal(req, res, url) {
+  const slug = url.pathname.split('/')[2];
+  const owner = await Accounts.findBySlug(slug).catch(() => null);
+  fs.readFile(path.join(PUBLIC, 'index.html'), 'utf8', (err, html) => {
+    if (err) { res.writeHead(500); return res.end(); }
+    const host = req.headers.host || PUBLIC_HOST || '';
+    const title = owner ? `${owner.name}’s Last Card table` : 'Last Card';
+    const desc = owner ? `Tap to sit down at ${owner.name}’s table. Free, no download.` : 'The card game for your group chat. Free, no download.';
+    const tags = `<meta property="og:title" content="${escAttr(title)}"><meta property="og:description" content="${escAttr(desc)}">`
+      + `<meta property="og:image" content="https://${escAttr(host)}/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">`
+      + `<meta property="og:url" content="https://${escAttr(host)}${escAttr(url.pathname)}"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image">`;
+    const out = html.replace(/<!-- og -->[\s\S]*?<!-- \/og -->/, '<!-- og -->' + tags + '<!-- /og -->').replace(/<title>[^<]*<\/title>/, `<title>${escAttr(title)}</title>`);
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
+    res.end(out);
+  });
+}
+const QRCode = require('qrcode');
+function serveQr(req, res, url) {
+  const u = url.searchParams.get('u') || '';
+  let ok = false; try { const x = new URL(u); ok = /^https?:$/.test(x.protocol) && (x.host === req.headers.host || x.host === PUBLIC_HOST) && u.length < 200; } catch (e) {}
+  if (!ok) { res.writeHead(400); return res.end(); }
+  QRCode.toString(u, { type: 'svg', margin: 2, color: { dark: '#0f2a3fff', light: '#ffffffff' } }, (err, svg) => {
+    if (err) { res.writeHead(500); return res.end(); }
+    res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400' });
+    res.end(svg);
+  });
+}
 
 // Admin accounts, by name, from the ADMIN_NAMES setting on Render (comma separated)
 const ADMINS = new Set(String(process.env.ADMIN_NAMES || '').split(',').map((n) => Accounts.keyOf(n)).filter(Boolean));
@@ -98,6 +131,10 @@ const io = new Server(server, { pingInterval: 20_000, pingTimeout: 25_000, maxHt
 // ---------- state ----------
 /** code -> { code, created, lastActive, rev, names, chat, players: Map<id, player>, s } */
 const tables = new Map();
+/** account key -> code of that player's own table (what saylastcard.com/t/<them> opens) */
+const homes = new Map();
+function setHome(t, key, name) { t.home = key; t.homeName = name; homes.set(key, t.code); }
+function dropHome(t) { if (t.home && homes.get(t.home) === t.code) homes.delete(t.home); }
 /** who sat where last: 'a:<account>' or 't:<token>' -> table code (for the "Rejoin" card) */
 const lastTable = new Map();
 const seatKeys = (p) => [p.account ? 'a:' + p.account : null, p.token ? 't:' + p.token : null].filter(Boolean);
@@ -136,12 +173,12 @@ let flushTimer = null;
 
 function serialize(t) {
   return {
-    code: t.code, created: t.created, lastActive: t.lastActive, rev: t.rev, names: t.names, chat: t.chat, s: t.s,
+    code: t.code, created: t.created, lastActive: t.lastActive, rev: t.rev, names: t.names, chat: t.chat, s: t.s, home: t.home || null, homeName: t.homeName || null,
     players: [...t.players.values()].map((p) => ({ id: p.id, token: p.token, account: p.account || null, name: p.name, joined: p.joined })),
   };
 }
 function deserialize(d) {
-  const t = { code: d.code, created: d.created, lastActive: d.lastActive || Date.now(), rev: d.rev || 0, names: d.names || {}, chat: d.chat || [], s: d.s, players: new Map() };
+  const t = { code: d.code, created: d.created, lastActive: d.lastActive || Date.now(), rev: d.rev || 0, names: d.names || {}, chat: d.chat || [], s: d.s, players: new Map(), home: d.home || null, homeName: d.homeName || null };
   for (const p of d.players || []) t.players.set(p.id, { ...p, sockets: new Set() });
   return t;
 }
@@ -156,6 +193,7 @@ function install(nt) {
   }
   if (old) { nt.requests = old.requests; nt.allowed = old.allowed; nt.observers = old.observers; }
   tables.set(nt.code, nt);
+  if (nt.home) homes.set(nt.home, nt.code);
   for (const p of nt.players.values()) remember(nt, p);
   return nt;
 }
@@ -222,6 +260,7 @@ function viewFor(t, pid) {
     color: s.color, top: s.discard[s.discard.length - 1] || null, pile: s.discard.length, deckCount: s.deck.length,
     counts, hand: (s.hands && s.hands[pid]) || [], unsafe: s.unsafe || null, turnAt: s.turnAt || 0,
     winner: s.winner || null, wins: s.wins || {}, log: (s.log || []).slice(-6), now: Date.now(),
+    home: t.home ? { slug: Accounts.slugOf(t.home), name: t.homeName || '' } : null,
     requests: pid === s.host && t.requests ? [...t.requests.entries()].map(([key, r]) => ({ key, name: r.name })) : [],
   };
 }
@@ -332,7 +371,7 @@ function removePlayer(t, id) {
     const sock = io.sockets.sockets.get(sid);
     if (sock) { sock.leave(t.code); sock.data.code = null; sock.data.pid = null; sock.emit('left', { code: t.code }); }
   }
-  if (t.players.size === 0) { trackPlayer(t, p, 'table_closed', { reason: 'empty', rounds: t.s.round || 0, players: 0, minutes_open: Math.round((Date.now() - (t.created || Date.now())) / 60000) }); tellObservers(t); tables.delete(t.code); markDirty(t); return; }
+  if (t.players.size === 0) { trackPlayer(t, p, 'table_closed', { reason: 'empty', rounds: t.s.round || 0, players: 0, minutes_open: Math.round((Date.now() - (t.created || Date.now())) / 60000) }); tellObservers(t); dropHome(t); tables.delete(t.code); markDirty(t); return; }
   if (t.s.host === id) {
     // hand the table to the earliest player who is online, else the earliest player
     const order = seatedOrder(t);
@@ -371,6 +410,8 @@ function recordRound(t, game) {
   Accounts.bumpStat('rounds').catch(() => {});
   const acct = (id) => { const p = t.players.get(id); return p && p.account; };
   const winner = acct(s.winner);
+  const keys = s.order.map(acct).filter(Boolean), lineup = keys.slice().sort().join('|');
+  if (keys.length > 1 && t.matesNoted !== lineup) { t.matesNoted = lineup; Accounts.noteMates(keys).catch(() => {}); }
   Accounts.recordResult(game, winner, s.order.map(acct))
     .then(async (ok) => {
       if (!ok) return;
@@ -466,7 +507,7 @@ io.on('connection', (socket) => {
     socket.data.token = token; socket.data.installed = !!installed;
     socket.data.account = session ? await Accounts.fromSession(session) : null;
     if (socket.data.account) Accounts.markActive(socket.data.account.key).catch(() => {});
-    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name, key: socket.data.account.key, admin: isAdmin(socket) } : null, sessionValid: !session || !!socket.data.account, last: lastFor(), analytics: Analytics.clientConfig(token) });
+    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name, key: socket.data.account.key, slug: Accounts.slugOf(socket.data.account.key), admin: isAdmin(socket) } : null, sessionValid: !session || !!socket.data.account, last: lastFor(), analytics: Analytics.clientConfig(token) });
   });
 
   on('login', async ({ name, pin, mode, known }, ack) => {
@@ -485,7 +526,7 @@ io.on('connection', (socket) => {
     if (r.created) Accounts.bumpStat('signups').catch(() => {});
     const c = ctx();
     if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
-    ack({ ok: true, session: r.session, name: r.name, key: r.key, created: r.created, newPin: !!r.newPin, last: lastFor(), admin: isAdmin(socket) });
+    ack({ ok: true, session: r.session, name: r.name, key: r.key, slug: Accounts.slugOf(r.key), created: r.created, newPin: !!r.newPin, last: lastFor(), admin: isAdmin(socket) });
   });
 
   // ---- feedback from players ----
@@ -609,7 +650,71 @@ io.on('connection', (socket) => {
       attach(socket, t, seat);
       return ack({ ok: true, exists: true, seated: true, code });
     }
+    looking(t);
     ack({ ok: true, exists: true, seated: false, info: peek(t) });
+  });
+
+  // someone opened this table's link but hasn't sat down yet: the host sees "Ravi opened your link"
+  const looking = (t) => {
+    const now = Date.now();
+    if (now - (socket.data.lookedAt || 0) < 20_000 && socket.data.lookedCode === t.code) return;
+    socket.data.lookedAt = now; socket.data.lookedCode = t.code;
+    io.to(t.code).emit('presence', { code: t.code, type: 'looking', name: socket.data.account ? socket.data.account.name : null, key: socket.data.account ? socket.data.account.key : socket.data.token.slice(0, 8), status: t.s.status });
+  };
+
+  // a personal link, saylastcard.com/t/<name>: that player's table if it's open, otherwise who they are
+  on('openHome', async ({ slug, via }, ack) => {
+    if (!socket.data.token) return ack({ ok: false, error: 'Not ready yet. Try again.' });
+    const owner = await Accounts.findBySlug(slug).catch(() => null);
+    if (!owner) { track('invite_opened', { via: 'home_link', table_exists: false, unknown_link: true }); return ack({ ok: true, exists: false, unknown: true }); }
+    const mine = socket.data.account && socket.data.account.key === owner.key;
+    const code = homes.get(owner.key);
+    const t = code ? await freshTable(code) : null;
+    const host = { name: owner.name, slug: Accounts.slugOf(owner.key), online: socketsOf(owner.key).length > 0, mine };
+    track('invite_opened', { via: 'home_link', table_exists: !!t, already_seated: !!(t && findSeat(t)), own_link: mine, table_status: t ? t.s.status : null });
+    if (!t) return ack({ ok: true, exists: false, host });
+    const seat = findSeat(t);
+    if (seat) { adoptSeat(t, seat); attach(socket, t, seat); return ack({ ok: true, exists: true, seated: true, code: t.code }); }
+    looking(t);
+    ack({ ok: true, exists: true, seated: false, info: peek(t), host });
+  });
+
+  // "Tell Tajammul I'm in": their table is closed, so buzz them
+  on('knock', async ({ slug }, ack) => {
+    const owner = await Accounts.findBySlug(slug).catch(() => null);
+    if (!owner) return ack({ ok: false, error: 'We couldn’t find that player.' });
+    const now = Date.now(), who = socket.data.account ? socket.data.account.name : null;
+    socket.data.knocks = (socket.data.knocks || []).filter((x) => now - x.at < 600_000);
+    if (socket.data.knocks.some((x) => x.key === owner.key && now - x.at < 120_000)) return ack({ ok: true, again: true });
+    if (socket.data.knocks.length >= 6) return ack({ ok: false, error: 'That’s a lot of knocking. Try again in a few minutes.' });
+    socket.data.knocks.push({ key: owner.key, at: now });
+    const body = `${who || 'A friend'} opened your link and wants to play.`;
+    for (const sk of socketsOf(owner.key)) sk.emit('knock', { name: who, at: now });
+    sendPush(owner.key, { title: 'Someone’s at your table', body, tag: 'lc-knock', url: '/?src=push' }).catch(() => {});
+    track('knock_sent', { host_online: socketsOf(owner.key).length > 0 });
+    ack({ ok: true });
+  });
+
+  // people you've played with, for the invite sheet
+  on('mates', async (_, ack) => {
+    if (!socket.data.account) return ack({ ok: true, list: [] });
+    const list = await Accounts.mates(socket.data.account.key, 12).catch(() => []);
+    ack({ ok: true, list: list.map((m) => ({ key: m.key, name: m.name, last: m.last, online: socketsOf(m.key).length > 0 })) });
+  });
+  // ping one of them: a push alert plus an in-app note, sending them to your table
+  on('ping', async ({ key }, ack) => {
+    if (!needAccount(ack)) return;
+    const me = socket.data.account, now = Date.now();
+    if (typeof key !== 'string' || key === me.key || !(await Accounts.isMate(me.key, key).catch(() => false))) return ack({ ok: false, error: 'You can only ping people you’ve played with.' });
+    socket.data.pings = (socket.data.pings || []).filter((x) => now - x.at < 600_000);
+    if (socket.data.pings.some((x) => x.key === key)) return ack({ ok: true, again: true });
+    if (socket.data.pings.length >= 10) return ack({ ok: false, error: 'That’s a lot of pings. Try again in a few minutes.' });
+    socket.data.pings.push({ key, at: now });
+    const slug = Accounts.slugOf(me.key);
+    for (const sk of socketsOf(key)) sk.emit('pinged', { name: me.name, slug });
+    sendPush(key, { title: `${me.name} is up for a game`, body: 'Tap to sit down at their table.', tag: 'lc-ping-' + slug, url: '/t/' + encodeURIComponent(slug) + '?src=push' }).catch(() => {});
+    track('ping_sent', { mate_online: socketsOf(key).length > 0 });
+    ack({ ok: true });
   });
 
   // look at a table without sitting down (the join-by-code preview and the invite card on home)
@@ -631,10 +736,26 @@ io.on('connection', (socket) => {
     if (!socket.data.token) return ack({ ok: false, error: 'Not ready yet. Try again.' });
     if (!needAccount(ack)) return;
     if (tables.size >= MAX_TABLES) return ack({ ok: false, error: 'The server is full right now. Try again later.' });
+    const akey = socket.data.account.key;
+    // you have one table: if it's still open, go back to it (sitting down again if you'd left)
+    const homeCode = homes.get(akey), home = homeCode && tables.get(homeCode);
+    if (home) {
+      let seat = findSeat(home);
+      if (!seat) {
+        if (home.players.size >= MAX_PLAYERS) return ack({ ok: false, error: 'Your table is full (10 players).' });
+        seat = { id: rid(6), token: socket.data.token, account: akey, name: socket.data.account.name, joined: Date.now(), sockets: new Set() };
+        home.players.set(seat.id, seat);
+        io.to(home.code).emit('presence', { code: home.code, type: 'joined', id: seat.id, name: seat.name, status: home.s.status });
+      }
+      const old = ctx(); if (old && old.t.code !== home.code && old.s.status === 'lobby') removePlayer(old.t, old.me);
+      attach(socket, home, seat);
+      return ack({ ok: true, code: home.code, again: true });
+    }
     const old = ctx(); if (old && old.s.status === 'lobby') removePlayer(old.t, old.me);
     const id = rid(6);
     const t = newTable(id);
-    const p = { id, token: socket.data.token, account: socket.data.account.key, name: socket.data.account.name, joined: Date.now(), sockets: new Set() };
+    setHome(t, akey, socket.data.account.name);
+    const p = { id, token: socket.data.token, account: akey, name: socket.data.account.name, joined: Date.now(), sockets: new Set() };
     t.players.set(id, p);
     attach(socket, t, p);
     ack({ ok: true, code: t.code });
@@ -987,7 +1108,7 @@ function closeTable(t, reason, by) {
   }
   tellObservers(t);
   closedTables.set(t.code, { at: Date.now(), reason, by: by || null, rounds: msg.rounds, standings });
-  tables.delete(t.code); markDirty(t);
+  dropHome(t); tables.delete(t.code); markDirty(t);
 }
 
 // what an old link can say about a table that has closed

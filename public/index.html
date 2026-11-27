@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0f2a3f">
 <meta name="description" content="Last Card: a match-the-color card game you play with friends on your phones.">
 <title>Last Card</title>
+<!-- og --><meta property="og:title" content="Last Card"><meta property="og:description" content="The card game for your group chat. Free, no download."><meta property="og:image" content="https://saylastcard.com/og.png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><!-- /og -->
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -40,6 +41,54 @@ button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(-
 [hidden]{display:none!important}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
+
+/* ---------- your table + invite sheet ---------- */
+.mytable{display:flex;flex-direction:column;gap:12px;padding:20px;border-radius:22px;background:var(--panel);border:1px solid var(--gold-edge)}
+.mt-top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.mt-top h2{font-size:22px}
+.mt-sub{font-size:13px;font-weight:700;color:var(--muted)}
+.mt-link{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:14px;background:var(--deep);color:var(--gold);min-width:0}
+.mt-link span{color:var(--ink);font-weight:700;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mt-link b{color:var(--gold)}
+.mt-why{margin:0;color:var(--soft)}
+.mt-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.mt-row .btn{min-height:46px;font-size:15px}
+.mt-open{align-self:center;color:var(--soft)}
+.joinhint{display:flex;flex-direction:column;gap:2px;padding:16px;border-radius:18px;background:var(--fill)}
+.joinhint p{margin:0;font-size:15px;line-height:1.45;color:var(--soft)}
+.joinhint b{color:var(--ink)}
+.joinhint .linkbtn{align-self:flex-start}
+.is-msg{padding:12px 14px;border-radius:16px 16px 16px 4px;background:var(--deep);font-size:15px;line-height:1.45;color:var(--soft);overflow-wrap:anywhere}
+.is-msg b{color:var(--gold);font-weight:700}
+.btn.wa{background:#25d366;color:#052e16;border-color:transparent;min-height:56px;font-size:18px}
+.is-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.is-grid .btn{flex-direction:column;gap:4px;min-height:66px;font-size:13px;padding:0 6px}
+.is-grid .btn svg{color:var(--gold)}
+.is-qr{display:flex;flex-direction:column;align-items:center;gap:8px}
+.is-qr img{width:220px;height:220px;border-radius:16px;background:#fff;padding:6px}
+.is-h{margin:4px 0 0;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-family:var(--body)}
+.mates{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.mates li{display:flex;align-items:center;gap:12px;min-height:54px}
+.mates .t{flex:1;min-width:0;display:flex;flex-direction:column}
+.mates .t b{font-size:16px}
+.mates .t span{font-size:13px;color:var(--muted)}
+.ping{min-height:40px;min-width:78px;padding:0 14px;border-radius:999px;border:1px solid var(--gold-edge);color:var(--gold);font-weight:800;font-size:14px}
+.ping.done{border-color:transparent;background:rgba(61,220,132,.12);color:var(--ok)}
+.arrivals{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.arrivals li{display:flex;align-items:center;gap:12px;min-height:48px}
+.arrivals .ghost{width:38px;height:38px;border-radius:999px;border:2px dashed rgba(245,239,227,.4);display:inline-flex;align-items:center;justify-content:center;font-weight:800;color:var(--soft);flex-shrink:0}
+.arrivals .t{flex:1;display:flex;flex-direction:column}
+.arrivals .t span{font-size:13px;color:var(--soft)}
+.dots{display:inline-flex;gap:4px}.dots i{width:6px;height:6px;border-radius:999px;background:var(--soft);animation:dotp 1.2s infinite}.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}
+@keyframes dotp{0%,100%{opacity:.25}50%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.dots i{animation:none}}
+.lk-row{display:flex;gap:8px;align-items:center}
+.lk-row .mt-link{flex:1}
+.knock-hero{display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;padding-top:20px}
+.knock-pill{padding:6px 14px;border-radius:999px;background:var(--fill);color:var(--soft);font-size:14px;font-weight:700}
+.knock-card{display:flex;flex-direction:column;gap:10px;padding:18px;border-radius:20px;background:var(--panel);border:1px solid var(--line-2)}
+.knock-card p{margin:0}
+.toast .tbtn{margin-left:10px;padding:6px 12px;border-radius:999px;background:var(--gold);color:var(--gold-ink);font-weight:800;font-size:14px;pointer-events:auto}
 
 /* ---------- shared ---------- */
 .screen{min-height:100%;display:flex;flex-direction:column}
@@ -786,12 +835,19 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
         </section>
         <div id="inviteBox"></div>
         <div id="rejoinBox"></div>
-        <section class="newgame2" id="newGameBox" aria-labelledby="ngh">
-          <h2 id="ngh" class="ng-h">Play with friends</h2>
-          <button class="ng-tile" id="joinOpen" type="button"><span class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg></span><span class="tx"><b>Join a friend’s table</b><span>They gave you a 4-letter code</span></span><svg class="ng-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
-          <button class="ng-tile" id="createBtn" type="button"><span class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="tx"><b>Start a new table</b><span>You host, and get a link to send friends</span></span><svg class="ng-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>
+        <section class="mytable" id="newGameBox" aria-labelledby="ngh">
+          <div class="mt-top"><h2 id="ngh">Your table</h2><span class="mt-sub">Opens when a friend arrives</span></div>
+          <div class="mt-link"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg><span id="myLink"></span></div>
+          <p class="note mt-why">Same link every time. Put it in your group chat once and friends can tap it any day you play.</p>
+          <button class="btn gold block" id="inviteBtn" type="button" style="min-height:56px;font-size:18px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>Invite friends</button>
+          <div class="mt-row"><a class="btn" id="waBtn" href="#" target="_blank" rel="noopener">WhatsApp</a><button class="btn" id="copyMine" type="button">Copy link</button></div>
+          <button class="linkbtn mt-open" id="createBtn" type="button">Open my table without inviting</button>
           <p class="err" id="homeErr" role="alert"></p>
           <p class="note" id="homeNote">Connecting to the game server…</p>
+        </section>
+        <section class="joinhint" aria-label="Joining a friend">
+          <p><b>Friend sent you a link?</b> Just tap it in the chat. It takes you straight to their table.</p>
+          <button class="linkbtn" id="joinOpen" type="button">I have a 4-letter code instead</button>
         </section>
         <button class="practice-row" id="practiceRow" type="button">
           <span class="pi"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01M9.5 16.5h5M2 13v3M22 13v3"/></svg></span>
@@ -971,6 +1027,9 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 </div>
 
 <!-- join a friend with a code -->
+<div class="sheet" id="inviteSheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="isT" id="isCard"></div>
+</div>
 <div class="sheet" id="joinSheet" hidden>
   <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="jsT">
     <span class="grab" aria-hidden="true"></span>

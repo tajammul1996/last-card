@@ -401,7 +401,45 @@ async function stats() {
   return out;
 }
 
+// ---------- personal table links: saylastcard.com/t/<slug> ----------
+// The slug is the account key with spaces as dashes. New usernames have no spaces, so slug == key.
+const slugOf = (key) => String(key || '').replace(/ /g, '-');
+async function findBySlug(raw) {
+  let slug = ''; try { slug = decodeURIComponent(String(raw || '')).trim().toLowerCase(); } catch (e) { return null; }
+  if (!slug || slug.length > 40) return null;
+  for (const key of [slug, slug.replace(/-/g, ' ')]) {
+    if (names.has(key)) return { key, name: names.get(key) };
+    const a = await get(K.acct(key));
+    if (a) return { key, name: a.name };
+  }
+  return null;
+}
+const nameOfKey = (key) => names.get(key) || null;
+
+// ---------- people you've played with (for "Ping" in the invite sheet) ----------
+const MATES_KEEP = 30, MATES_TTL = 120 * 24 * 3600;
+async function noteMates(keys) {
+  const ks = [...new Set(keys.filter(Boolean))]; if (ks.length < 2) return;
+  const now = Date.now();
+  if (r) {
+    const m = r.multi();
+    for (const k of ks) {
+      m.zAdd('lc:mates:' + k, ks.filter((o) => o !== k).map((o) => ({ score: now, value: o })));
+      m.zRemRangeByRank('lc:mates:' + k, 0, -(MATES_KEEP + 1)); m.expire('lc:mates:' + k, MATES_TTL);
+    }
+    await m.exec();
+  } else for (const k of ks) for (const o of ks) if (o !== k) await zadd('lc:mates:' + k, o, now);
+}
+async function mates(key, n = 12) {
+  const rows = await zall('lc:mates:' + key, n);
+  const keys = [...rows.keys()];
+  const missing = keys.filter((k) => !names.has(k));
+  if (missing.length && r) { const vals = await r.mGet(missing.map(K.acct)); vals.forEach((v, i) => { try { const a = v && JSON.parse(v); if (a && a.name) names.set(missing[i], a.name); } catch (e) {} }); }
+  return keys.map((k) => ({ key: k, name: names.get(k) || k, slug: slugOf(k), last: rows.get(k) }));
+}
+async function isMate(key, other) { return (await zscore('lc:mates:' + key, other)) > 0; }
+
 const persistent = () => !!r;
 async function close() { if (r) { try { await flushChat(); await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, allowPinReset, setNewPin, fbCreate, fbGet, fbList, fbUpdate, fbTodo, FB_STATUS, bumpStat, markActive, stats, GAMES };
+module.exports = { slugOf, findBySlug, nameOfKey, noteMates, mates, isMate, init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, allowPinReset, setNewPin, fbCreate, fbGet, fbList, fbUpdate, fbTodo, FB_STATUS, bumpStat, markActive, stats, GAMES };

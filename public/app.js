@@ -132,7 +132,7 @@ function send(ev, data, quiet) {
 }
 
 /* ---------- screens + routing ---------- */
-const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet', 'joinSheet', 'startSheet', 'admThread'];
+const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet', 'joinSheet', 'startSheet', 'inviteSheet', 'admThread'];
 function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#' + id).hidden = true; $('#reactPop').hidden = true; }
 function show(v) {
   if (v !== 'game' && practice) endPractice();
@@ -145,12 +145,14 @@ function show(v) {
   if (v !== 'game') { closeSheets('signin'); $('#chat').classList.remove('open'); }
   window.scrollTo(0, 0);
 }
-function setHash(h) { const want = h ? '#' + h : ''; if (location.hash !== want) history.replaceState(null, '', location.pathname + want); }
+function setHash(h) { const want = h ? '#' + h : ''; if (location.hash !== want || location.pathname !== '/') history.replaceState(null, '', '/' + want); }
+function pathSlug() { const m = /^\/t\/([^/]{1,60})\/?$/.exec(location.pathname); return m ? m[1] : null; }
 function hashCode() { const m = /^#([A-Za-z]{4})$/.exec(location.hash || ''); return m ? m[1].toUpperCase() : null; }
 function route() {
   if (!ready) return;
-  const code = hashCode();
-  if (code) openTable(code);
+  const code = hashCode(), slug = pathSlug();
+  if (slug && !code) openHome(slug);
+  else if (code) openTable(code);
   else if (location.hash === '#leaderboard') showBoard(view === 'game' ? 'game' : 'home');
   else if (location.hash === '#admin' && me && me.admin) showAdmin();
   else if (location.hash === '#feedback' && me) showFeedback('home');
@@ -303,7 +305,7 @@ $('#siForm').addEventListener('submit', async (e) => {
     const p = $('#siPin'); if (p) { p.value = ''; p.focus(); }
     return;
   }
-  me = { name: r.name, key: r.key, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
+  me = { name: r.name, key: r.key, slug: r.slug, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
   rememberName(r.name); resetAuth(); loadFb(); phWho();
   $('#signin').hidden = true;
   toast(r.created ? `Welcome, ${r.name}! Remember your PIN to keep your wins.` : r.newPin ? `New PIN saved. Welcome back, ${r.name}!` : `Signed in as ${r.name}`);
@@ -434,6 +436,14 @@ socket.on('recorded', (m) => { if (m && m.code === curCode) { recorded = m; if (
 socket.on('nudged', (m) => { if (m && m.code === curCode) { Snd.play('nudge'); buzz(); toast(`${nameOf(m.by)} is waiting for you to deal`, 'call'); } });
 socket.on('presence', (m) => {
   if (!m || m.code !== curCode || !G) return;
+  if (m.type === 'looking') {
+    if (me && m.name === me.name) return;
+    const isNew = !arrivals.has(m.key); arrivals.set(m.key, { name: m.name, at: Date.now() });
+    if (G.status === 'lobby' && view === 'game') render();
+    if (isNew && view === 'game') toast(`${m.name || 'Someone'} opened your link`, '');
+    return;
+  }
+  if (m.type === 'joined') for (const [k, a] of arrivals) if (a.name === m.name) arrivals.delete(k);
   if (m.id === G.me || (me && m.name === me.name)) return;
   const text = m.type === 'joined' ? (m.status === 'playing' ? `${m.name} is watching · dealt in next round` : `${m.name} joined the table${m.status === 'lobby' ? '' : ' · dealt in next round'}`) : `${m.name} left the table`;
   chatMsgs.push({ sys: true, text, at: Date.now() }); if (chatMsgs.length > 60) chatMsgs.shift();
@@ -484,6 +494,7 @@ function showHome() {
     $('#rejoinBtn').onclick = () => openTable(last.code, 'rejoin');
   } else box.innerHTML = '';
   paintInvite();
+  paintMyTable();
   // offline: only practice is possible
   $('#offlineBox').hidden = !offline;
   $('#lbh').closest('section').hidden = offline;
@@ -559,12 +570,143 @@ async function loadHomeBoard() {
     : `<span>${me ? 'Finish a round to get on the board.' : 'Sign in and finish a round to get on the board.'}</span>`;
   $('#topList').innerHTML = top.length ? top.map((x) => `<li class="${x.me ? 'me' : ''}"><span class="rk">${x.rank}</span><span class="nm">${esc(x.name)}${x.me ? ' (you)' : ''}${x.online ? ONDOT : ''}</span><span class="w">${x.wins}</span></li>`).join('') : `<li><span class="nm" style="color:var(--muted)">No wins yet. ${me ? 'Finish a round to be first.' : 'Sign in and finish a round to be first.'}</span></li>`;
 }
+/* ---------- one table, one link: saylastcard.com/t/<you> ---------- */
+function slugFor(name) { return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase().replace(/ /g, '-'); }
+function myLink() { return me ? location.origin + '/t/' + encodeURIComponent(me.slug || slugFor(me.name)) : ''; }
+function shareText(host, link) { return `${host}’s Last Card table is open. Tap to sit down: ${link}`; }
+function waHref(text) { return 'https://wa.me/?text=' + encodeURIComponent(text); }
+function paintMyTable() {
+  if (!me) return;
+  const link = myLink();
+  $('#myLink').innerHTML = esc(location.host) + '/t/<b>' + esc(me.slug || slugFor(me.name)) + '</b>';
+  $('#waBtn').href = waHref(shareText(me.name, link));
+}
+$('#inviteBtn').onclick = () => needSignIn(async () => { if (await createTable('invite')) openInviteSheet(); });
+$('#waBtn').onclick = (e) => {
+  if (!me) { e.preventDefault(); needSignIn(() => {}); return; }
+  track('invite_shared', { method: 'whatsapp', from: 'home' }); createTable('whatsapp');
+};
+$('#copyMine').onclick = () => needSignIn(() => { track('invite_shared', { method: 'copy', from: 'home' }); copyLink(myLink()); createTable('copy'); });
+
+// the invite sheet: WhatsApp, other apps, copy, QR, and people you've played with
+let matesCache = null;
+async function openInviteSheet() {
+  if (!G) return;
+  const link = inviteLink(), host = G.home ? G.home.name : nameOf(G.host), mineTable = G.home && me && G.home.slug === (me.slug || slugFor(me.name));
+  const text = shareText(host, link);
+  const card = $('#isCard');
+  card.innerHTML = `<span class="grab" aria-hidden="true"></span>
+    <button class="iconbtn sheet-close" data-close="inviteSheet" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    <h2 id="isT">${mineTable ? 'Invite to your table' : `Invite to ${esc(host)}’s table`}</h2>
+    <div class="is-msg">${esc(host)}’s Last Card table is open. Tap to sit down: <b>${esc(link.replace(/^https?:\/\//, ''))}</b></div>
+    <a class="btn wa block" id="isWa" href="${esc(waHref(text))}" target="_blank" rel="noopener"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L3 21l1.6-5.2A8.5 8.5 0 1 1 21 12z"/></svg>Send on WhatsApp</a>
+    <div class="is-grid">
+      <button class="btn" id="isShare" type="button" ${navigator.share ? '' : 'hidden'}>${ICON.share}Other apps</button>
+      <button class="btn" id="isCopy" type="button"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>Copy link</button>
+      <button class="btn" id="isQrBtn" type="button" aria-expanded="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3M21 14v7h-7"/></svg>QR code</button>
+    </div>
+    <div class="is-qr" id="isQr" hidden><img alt="QR code for ${esc(link)}" src="/qr.svg?u=${encodeURIComponent(link)}"><p class="note" style="margin:0">Friends in the room can point their camera here.</p></div>
+    <div id="isMates"></div>`;
+  closeSheets(); $('#inviteSheet').hidden = false;
+  $('#isWa').onclick = () => track('invite_shared', { method: 'whatsapp', from: 'sheet' });
+  $('#isShare').onclick = async () => { try { await navigator.share({ title: 'Last Card', text: `${host}’s Last Card table is open. Tap to sit down.`, url: link }); track('invite_shared', { method: 'share_sheet', from: 'sheet' }); } catch (e) {} };
+  $('#isCopy').onclick = () => { track('invite_shared', { method: 'copy', from: 'sheet' }); copyLink(link); };
+  $('#isQrBtn').onclick = () => { const q = $('#isQr'); q.hidden = !q.hidden; $('#isQrBtn').setAttribute('aria-expanded', String(!q.hidden)); if (!q.hidden) track('invite_shared', { method: 'qr', from: 'sheet' }); };
+  if (!me) return;
+  const r = await send('mates', {}, true);
+  if (!r.ok || !r.list.length || $('#inviteSheet').hidden) return;
+  const here = new Set((G.players || []).map((p) => p.name));
+  const list = r.list.filter((m) => !here.has(m.name)).slice(0, 6);
+  if (!list.length) return;
+  $('#isMates').innerHTML = `<p class="is-h">Played with recently</p><ul class="mates">${list.map((m) => `<li>${avatarFor(m.key, m.name)}<span class="t"><b>${esc(m.name)}</b><span>${m.online ? 'Online now' : 'Played ' + esc(daysAgoText(m.last))}</span></span><button class="ping" type="button" data-ping="${esc(m.key)}">Ping</button></li>`).join('')}</ul>`;
+  $$('#isMates [data-ping]').forEach((b) => { b.onclick = async () => {
+    b.disabled = true;
+    const x = await send('ping', { key: b.dataset.ping });
+    if (x.ok) { b.textContent = 'Pinged'; b.classList.add('done'); } else b.disabled = false;
+  }; });
+}
+function daysAgoText(t) { const d = Math.floor((Date.now() - t) / 864e5); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 7 ? d + ' days ago' : d < 14 ? 'last week' : Math.round(d / 7) + ' weeks ago'; }
+
+// someone opened your link or knocked: the lobby lists them live
+const arrivals = new Map(); // key -> { name, at }
+function arrivalsHTML() {
+  const now = Date.now();
+  for (const [k, a] of arrivals) if (now - a.at > 5 * 60_000 || (G && G.players.some((p) => a.name && p.name === a.name))) arrivals.delete(k);
+  if (!arrivals.size) return '';
+  return `<ul class="arrivals" aria-live="polite">${[...arrivals.values()].map((a) => `<li><span class="ghost" aria-hidden="true">${a.name ? esc(a.name[0].toUpperCase()) : '?'}</span><span class="t"><b>${a.name ? esc(a.name) : 'Someone'}</b><span>Opened the link · getting ready</span></span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></li>`).join('')}</ul>`;
+}
+
+// a personal link: the owner's table if it's open, otherwise a page to tell them you're here
+let knockPoll = null;
+async function openHome(slug, via = 'link') {
+  clearInterval(knockPoll); knockPoll = null;
+  joinVia = via;
+  const r = await send('openHome', { slug, via }, true);
+  if (!r.ok) { showHome(); toast(r.error || 'Couldn’t open that link.'); return; }
+  if (r.unknown) { showHome(); toast('That link doesn’t match a player. Check it with your friend.'); return; }
+  if (r.exists && r.seated) { enterGame(r.code); return; }
+  if (r.exists) { showInvite(r.info); return; }
+  if (r.host.mine) { if (me) { if (!(await createTable('own_link'))) showHome(); } else { showHome(); } return; }
+  showKnock(r.host);
+}
+function showKnock(host) {
+  show('invite'); history.replaceState(null, '', '/t/' + encodeURIComponent(host.slug));
+  const body = $('#inviteBody');
+  body.innerHTML = `<a class="logo" href="/" style="flex-grow:0">Last <span>Card</span></a>
+    <div class="knock-hero">${avatarFor(host.slug.replace(/-/g, ' '), host.name, { size: 'lg' })}
+      <h1>${esc(host.name)}’s table</h1>
+      <span class="knock-pill">${host.online ? `${esc(host.name)} is online, not at the table yet` : 'Not open right now'}</span></div>
+    <section class="knock-card" aria-labelledby="kcT">
+      <p id="kcT" style="font-weight:800;font-size:17px">Up for a game?</p>
+      <p class="note" style="font-size:15px;color:var(--soft)" id="kcNote">We’ll tell ${esc(host.name)} you’re here. When the table opens, this page takes you in.</p>
+      <button class="btn gold block" id="knockBtn" style="min-height:56px;font-size:17px">Tell ${esc(host.name)} I’m in</button>
+    </section>
+    <p class="note" style="text-align:center">This link always leads to ${esc(host.name)}’s table. It never expires.</p>
+    <div class="inv-foot">
+      <button class="linkbtn" id="kPractice" style="align-self:center">Practice while you wait</button>
+      <button class="linkbtn" id="kHome" style="align-self:center;color:var(--soft)">${me ? 'Go to my own table' : 'Go to home'}</button>
+    </div>`;
+  $('#kPractice').onclick = () => { showHome(); openPracticeSetup(); };
+  $('#kHome').onclick = () => showHome();
+  $('#knockBtn').onclick = async () => {
+    const b = $('#knockBtn'); b.disabled = true;
+    const r = await send('knock', { slug: host.slug });
+    if (!r.ok) { b.disabled = false; return; }
+    b.textContent = `${host.name} knows you’re here`;
+    $('#kcNote').textContent = `Keep this page open. You’ll go to the table as soon as ${host.name} opens it.`;
+    // check every 8 seconds for 10 minutes
+    let tries = 0; clearInterval(knockPoll);
+    knockPoll = setInterval(async () => {
+      if (view !== 'invite' || ++tries > 75) { clearInterval(knockPoll); knockPoll = null; return; }
+      const x = await send('openHome', { slug: host.slug, via: 'knock_wait' }, true);
+      if (x.ok && x.exists) { clearInterval(knockPoll); knockPoll = null; if (x.seated) enterGame(x.code); else showInvite(x.info); }
+    }, 8000);
+  };
+}
+socket.on('knock', (m) => {
+  Snd.play('chat'); buzz();
+  const who = m && m.name ? esc(m.name) : 'A friend';
+  if (view === 'game' && G && G.home && me && G.home.slug === (me.slug || slugFor(me.name))) { toast('', 'admalert', `${who} wants to join. They’re waiting on your link.`); return; }
+  toast('', 'admalert', `${who} is at your link and wants to play.<button class="tbtn" data-open-mine="1">Open my table</button>`);
+});
+socket.on('pinged', (m) => {
+  if (!m || !m.slug) return;
+  Snd.play('chat'); buzz();
+  toast('', 'admalert', `${esc(m.name)} is up for a game.<button class="tbtn" data-goto-home="${esc(m.slug)}">Join</button>`);
+});
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-open-mine]'); if (a) { a.closest('.toast').remove(); createTable('knock'); }
+  const b = e.target.closest('[data-goto-home]'); if (b) { b.closest('.toast').remove(); openHome(b.dataset.gotoHome, 'ping'); }
+});
+
 async function createTable(from = 'home') {
   closeSheets();
   $('#createBtn').disabled = true;
   const r = await send('create', { from, hadInvite: !!invitePeek }, true);
   $('#createBtn').disabled = false;
-  if (r.ok) { clearInvite(); enterGame(r.code); } else $('#homeErr').textContent = r.error || 'Couldn’t start a table.';
+  if (r.ok) { clearInvite(); enterGame(r.code); return true; }
+  $('#homeErr').textContent = r.error || 'Couldn’t open your table.';
+  return false;
 }
 // Starting a table while a friend's invite is waiting asks once, because people kept opening a table
 // of their own by mistake instead of joining the one they were invited to.
@@ -575,7 +717,7 @@ $('#createBtn').onclick = () => needSignIn(() => {
     <div style="display:flex;align-items:center;gap:12px">${avatarFor(inv.host.toLowerCase(), inv.host)}<h2 id="ssT" style="margin:0">${esc(inv.host)} is waiting for you</h2></div>
     <p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">${esc(inv.host)} invited you to table <b style="color:var(--ink)">${esc(inv.code)}</b>. A new table is a separate game, so you won’t be playing with them.</p>
     <button class="btn gold block" id="ssJoin" style="min-height:54px">Join ${esc(inv.host)}’s table instead</button>
-    <button class="btn block" id="ssNew" style="min-height:54px">Start my own table</button>
+    <button class="btn block" id="ssNew" style="min-height:54px">Open my own table</button>
     <p class="note" style="text-align:center;margin:0">${esc(inv.host)}’s invite stays on your home screen while their table is open.</p>`;
   closeSheets(); $('#startSheet').hidden = false;
   $('#ssJoin').onclick = () => { track('start_while_invited', { choice: 'join_instead' }); closeSheets(); openTable(inv.code, 'invite_card'); };
@@ -607,7 +749,7 @@ async function jsCheck() {
     track('join_code_checked', { result: r.closed ? 'closed' : 'not_found' });
     inp.className = 'inp code-big bad';
     $('#jsRes').innerHTML = `<div class="js-miss">${MISS_ICON}<span class="t"><b>${r.closed ? `Table ${esc(code)} has closed` : `No open table called ${esc(code)}`}</b><span>${r.closed ? esc(closedLine(r.closed)) + ' Ask your friend for a new link.' : 'Check the letters with your friend. If their game ended, the table closed and they’ll need to send a new link.'}</span></span></div>`;
-    $('#jsAct').innerHTML = '<button type="button" class="btn block" id="jsNew" style="min-height:52px">Start a new table instead</button>';
+    $('#jsAct').innerHTML = '<button type="button" class="btn block" id="jsNew" style="min-height:52px">Open my table instead</button>';
     $('#jsNew').onclick = () => needSignIn(() => createTable('join_sheet'));
     return;
   }
@@ -648,7 +790,6 @@ async function paintInvite() {
   </section>`;
   $('#ivJoin').onclick = () => openTable(i.code, 'invite_card');
   $('#ivX').onclick = clearInvite;
-  $('#createBtn').className = 'ng-tile';
 }
 
 /* ---------- invite (opened from a link) ---------- */
@@ -677,9 +818,9 @@ function showInvite(info) {
       ${c && c.players.length ? `<div class="closed-card">${avatarFor((c.winner || c.players[0]).toLowerCase(), c.winner || c.players[0])}<span class="t"><b>${c.winner ? esc(c.winner) + ' won the game' : 'Nobody finished a round'}</b><span>${c.rounds} round${c.rounds === 1 ? '' : 's'} with ${esc(listNames(c.players.slice(0, 4)))}</span></span></div>` : ''}
       <div class="inv-foot">
         <button class="btn light block" id="invHome2" style="min-height:56px;font-size:17px">Go to home</button>
-        <button class="btn block" id="invNew" style="min-height:54px">Start a new table</button>
+        <button class="btn block" id="invNew" style="min-height:54px">Open my table</button>
         <button class="linkbtn" id="invCode" style="align-self:center;color:var(--soft)">Type a code instead</button>
-        <p class="note" style="text-align:center">Want to play with them again? Ask for a new link.</p>
+        <p class="note" style="text-align:center">Ask your friend for their personal link. It never expires.</p>
       </div>`;
     $('#invHome').onclick = $('#invHome2').onclick = () => showHome();
     $('#invNew').onclick = () => { showHome(); needSignIn(() => createTable('closed_page')); };
@@ -750,7 +891,7 @@ socket.on('declined', (m) => {
   waitingFor = null;
   $('#inviteBody').innerHTML = `<a class="logo" href="/" style="flex-grow:0">Last <span>Card</span></a>
     <div class="inv-hero" style="padding-top:40px"><h1>${esc(m.host)} didn’t let you in this time</h1><p class="note" style="font-size:15px">You can ask again, or start your own table.</p></div>
-    <div class="inv-foot"><button class="btn gold block" id="decAgain">Ask again</button><button class="btn block" id="decHome">Start my own table</button></div>`;
+    <div class="inv-foot"><button class="btn gold block" id="decAgain">Ask again</button><button class="btn block" id="decHome">Open my own table</button></div>`;
   $('#decAgain').onclick = () => openTable(m.code);
   $('#decHome').onclick = () => showHome();
 });
@@ -983,7 +1124,7 @@ function render() {
 }
 
 /* ---------- lobby ---------- */
-function inviteLink() { return location.origin + location.pathname + '#' + G.code; }
+function inviteLink() { return G.home ? location.origin + '/t/' + encodeURIComponent(G.home.slug) : location.origin + '/#' + G.code; }
 function copyLink(link) { try { navigator.clipboard.writeText(link).then(() => toast('Link copied. Paste it in your group chat.'), () => toast(link)); } catch (e) { toast(link); } }
 function hostWaitHTML(what) {
   const hn = esc(nameOf(G.host));
@@ -996,10 +1137,10 @@ function renderLobby() {
   $('#gMain').innerHTML = `
     <div class="lobby">
       <section class="card-box gold-box invite-card" aria-labelledby="invh" style="padding:16px;border-radius:20px">
-        <h2 id="invh">Invite your friends</h2>
-        <p class="note" style="color:var(--soft)">They open the link, tap Join and land right here.</p>
-        <input class="inp linkbox" readonly value="${esc(inviteLink())}" aria-label="Invite link" style="font-size:15px">
-        <div class="row"><button class="btn light" id="shareBtn">${ICON.share}Share link</button><button class="btn" id="copyBtn" style="flex:0 0 auto">Copy</button></div>
+        <h2 id="invh">${ps.length < 2 ? 'Invite your friends' : 'Invite more'}</h2>
+        <div class="lk-row"><div class="mt-link"><span>${esc(inviteLink().replace(/^https?:\/\//, ''))}</span></div><button class="btn" id="copyBtn" style="flex:0 0 auto">Copy</button></div>
+        <button class="btn gold block" id="shareBtn" style="min-height:52px">${ICON.share}Invite friends</button>
+        ${arrivalsHTML()}
       </section>
       <section aria-labelledby="plh" style="display:flex;flex-direction:column;gap:8px">
         <h2 id="plh" style="font-size:18px">At the table · ${ps.length} of 10</h2>
@@ -1010,12 +1151,8 @@ function renderLobby() {
       <div class="dealrules"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg><span>${esc(ruleText[0].toUpperCase() + ruleText.slice(1))}</span>${host ? '<button class="linkbtn" id="rulesBtn">Change rules</button>' : ''}</div>
       ${host ? `<p class="note">${ps.length < 2 ? 'You need at least 2 players to deal.' : 'Anyone who joins later is dealt in next round.'}</p><button class="btn gold" id="startBtn" ${ps.length < 2 ? 'disabled' : ''}>${ps.length < 2 ? 'Waiting for players' : `Deal cards · ${ps.length} players`}</button>` : hostWaitHTML('deal the cards')}
     </div>`;
-  $('#shareBtn').onclick = async () => {
-    const link = inviteLink();
-    if (navigator.share) { try { await navigator.share({ title: 'Last Card', text: `Join my Last Card table! Code ${G.code}`, url: link }); track('invite_shared', { method: 'share_sheet' }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
-    track('invite_shared', { method: 'copy' }); copyLink(link);
-  };
-  $('#copyBtn').onclick = () => { track('invite_shared', { method: 'copy' }); copyLink(inviteLink()); };
+  $('#shareBtn').onclick = () => openInviteSheet();
+  $('#copyBtn').onclick = () => { track('invite_shared', { method: 'copy', from: 'lobby' }); copyLink(inviteLink()); };
   const rb = $('#rulesBtn'); if (rb) rb.onclick = () => { closeSheets(); $('#rules').hidden = false; };
   const sb = $('#startBtn'); if (sb) sb.onclick = () => send('start');
   wireClaim();
