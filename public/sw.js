@@ -1,8 +1,8 @@
 /* Last Card service worker: the app opens offline (practice works without the internet),
    and your-turn alerts arrive while the app is closed. Pages and scripts are fetched fresh
    when online, so a deploy shows up straight away; the cache is only the offline fallback. */
-const CACHE = 'lc-v1';
-const SHELL = ['/', '/app.js', '/engine.js', '/socket.io/socket.io.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icon.svg'];
+const CACHE = 'lc-v2';
+const SHELL = ['/', '/move.js', '/app.js', '/engine.js', '/socket.io/socket.io.js', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => Promise.all(SHELL.map((u) => c.add(u).catch(() => {})))).then(() => self.skipWaiting()));

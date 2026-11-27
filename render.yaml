@@ -24,6 +24,9 @@ services:
       # POSTHOG_HOST: https://us.i.posthog.com (US) or https://eu.i.posthog.com (EU)
       - key: POSTHOG_KEY
         sync: false
+      # PUBLIC_HOST: https://us.i.posthog.com (US) or https://eu.i.posthog.com (EU)
+      - key: POSTHOG_KEY
+        sync: false
       - key: POSTHOG_HOST
         sync: false
 

@@ -26,10 +26,39 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const KEY = (code) => 'lc:t:' + code;
 
 // ---------- static files ----------
+// Moving address: PUBLIC_HOST (e.g. saylastcard.com) is where onrender.com visitors get sent, sign-in and all.
+const PUBLIC_HOST = /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(process.env.PUBLIC_HOST || '') ? process.env.PUBLIC_HOST.toLowerCase() : null;
+const handoffs = new Map(); // one-time code -> { data, at }
+function handoff(req, res, which) {
+  let body = '';
+  req.on('data', (c) => { body += c; if (body.length > 8000) req.destroy(); });
+  req.on('end', () => {
+    const now = Date.now();
+    for (const [k, v] of handoffs) if (now - v.at > 120_000) handoffs.delete(k);
+    let j = null; try { j = JSON.parse(body); } catch (e) {}
+    const send = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(JSON.stringify(obj)); };
+    if (!j) return send(400, { ok: false });
+    if (which === '/handoff') {
+      if (!PUBLIC_HOST || handoffs.size > 5000 || !j.data || typeof j.data !== 'object') return send(400, { ok: false });
+      const data = {};
+      for (const [k, v] of Object.entries(j.data)) if (/^lc-[a-z-]{1,20}$/.test(k) && typeof v === 'string' && v.length < 4000) data[k] = v;
+      const code = crypto.randomBytes(16).toString('hex');
+      handoffs.set(code, { data, at: now });
+      return send(200, { ok: true, code });
+    }
+    const h = handoffs.get(String(j.code || ''));
+    handoffs.delete(String(j.code || ''));
+    if (!h) return send(404, { ok: false });
+    Analytics.capture(Analytics.deviceId(h.data['lc-token'] || ''), 'address_moved', {});
+    return send(200, { ok: true, data: h.data });
+  });
+}
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/healthz') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end('ok'); }
+  if (url.pathname === '/move.json') { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); return res.end(JSON.stringify({ to: PUBLIC_HOST })); }
+  if (req.method === 'POST' && (url.pathname === '/handoff' || url.pathname === '/handoff/redeem')) return handoff(req, res, url.pathname);
   const file = url.pathname === '/' ? '/index.html' : url.pathname;
   const full = path.normalize(path.join(PUBLIC, file));
   if (!full.startsWith(PUBLIC)) { res.writeHead(403); return res.end(); }
