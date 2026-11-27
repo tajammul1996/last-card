@@ -12,6 +12,7 @@ const Accounts = require('./accounts.js');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
+const Analytics = require('./analytics');
 const BUILD = (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'dev-' + Date.now().toString(36);
 const MAX_PLAYERS = 10;
 const MAX_TABLES = 500;
@@ -55,6 +56,7 @@ async function setupPush() {
   } catch (e) { console.error('turn alerts off:', e.message); }
 }
 async function sendPush(acctKey, payload) {
+  if (!ADMINS.has(acctKey)) Analytics.capture(acctKey, 'push_sent', { type: /^lc-fbu-/.test(payload.tag || '') ? 'reply' : /^lc-admin|^lc-fb-/.test(payload.tag || '') ? 'admin' : /^Round over/.test(payload.title || '') ? 'round_over' : 'turn', app_version: BUILD });
   if (!vapidPublic || !acctKey) return;
   const subs = await Accounts.pushSubs(acctKey).catch(() => []);
   for (const sub of subs) {
@@ -195,6 +197,43 @@ function viewFor(t, pid) {
   };
 }
 
+// ---------- analytics (see analytics.js; off without POSTHOG_KEY) ----------
+const NEW_PLAYER_MS = 7 * 864e5;
+function platformOf(ua) {
+  ua = String(ua || '');
+  return /iPhone|iPod/.test(ua) ? 'iphone' : /iPad/.test(ua) ? 'ipad' : /Android/.test(ua) ? 'android' : /Mac OS X/.test(ua) ? 'mac' : /Windows/.test(ua) ? 'windows' : /Linux/.test(ua) ? 'linux' : 'other';
+}
+// one event for one player at a table, from wherever it happens (a round ending, a table closing)
+function trackPlayer(t, p, event, props) {
+  if (!Analytics.enabled() || !p || (p.account && ADMINS.has(p.account))) return;
+  const sock = [...p.sockets].map((id) => io.sockets.sockets.get(id)).find(Boolean);
+  const sd = sock ? sock.data : {};
+  Analytics.capture(p.account || Analytics.deviceId(p.token), event, {
+    platform: sd.platform || null, installed: !!sd.installed, app_version: BUILD,
+    table_code: t.code, table_players: t.players.size, is_host: t.s.host === p.id,
+    new_player: sd.account && sd.account.since ? Date.now() - sd.account.since < NEW_PLAYER_MS : null, ...props,
+  });
+}
+// rounds start and end in several ways (deal, last card, last player standing), so watch the state instead
+function trackRounds(t) {
+  if (!Analytics.enabled()) return;
+  const s = t.s;
+  if (s.status === 'playing' && t.anRound !== s.round) {
+    t.anRound = s.round; t.rs = { at: Date.now(), plays: 0, draws: 0, calls: 0, catches: 0, idle_skips: 0 };
+    const watchers = t.players.size - s.order.length;
+    for (const id of s.order) trackPlayer(t, t.players.get(id), 'round_started', { round: s.round, players: s.order.length, watchers });
+  }
+  if (s.status === 'over' && t.anOver !== s.round) {
+    t.anOver = s.round;
+    const rs = t.rs || {};
+    for (const id of s.order) trackPlayer(t, t.players.get(id), 'round_finished', {
+      won: s.winner === id, round: s.round, players: s.order.length, seconds: rs.at ? Math.round((Date.now() - rs.at) / 1000) : null,
+      plays: rs.plays || 0, draws: rs.draws || 0, calls: rs.calls || 0, catches: rs.catches || 0, idle_skips: rs.idle_skips || 0,
+    });
+  }
+}
+const roundStat = (t, k) => { if (t.rs) t.rs[k] = (t.rs[k] || 0) + 1; };
+
 function broadcast(t, save = true) {
   for (const p of t.players.values()) {
     for (const sid of p.sockets) io.to(sid).emit('state', viewFor(t, p.id));
@@ -203,7 +242,7 @@ function broadcast(t, save = true) {
     const view = Object.assign(viewFor(t, null), { admin: true });
     for (const sid of t.observers) io.to(sid).emit('adminState', { code: t.code, view });
   }
-  if (save) { markDirty(t); maybeAlert(t); }
+  if (save) { markDirty(t); maybeAlert(t); trackRounds(t); }
 }
 function plainLog(t) {
   const lg = (t.s.log || []).slice(-1)[0];
@@ -264,7 +303,7 @@ function removePlayer(t, id) {
     const sock = io.sockets.sockets.get(sid);
     if (sock) { sock.leave(t.code); sock.data.code = null; sock.data.pid = null; sock.emit('left', { code: t.code }); }
   }
-  if (t.players.size === 0) { tellObservers(t); tables.delete(t.code); markDirty(t); return; }
+  if (t.players.size === 0) { trackPlayer(t, p, 'table_closed', { reason: 'empty', rounds: t.s.round || 0, players: 0, minutes_open: Math.round((Date.now() - (t.created || Date.now())) / 60000) }); tellObservers(t); tables.delete(t.code); markDirty(t); return; }
   if (t.s.host === id) {
     // hand the table to the earliest player who is online, else the earliest player
     const order = seatedOrder(t);
@@ -315,6 +354,18 @@ function recordRound(t, game) {
 // ---------- sockets ----------
 io.on('connection', (socket) => {
   socket.data = { token: null, account: null, code: null, pid: null, last: 0, burst: 0, lastChat: 0 };
+  socket.data.platform = platformOf(socket.handshake && socket.handshake.headers['user-agent']);
+  // analytics for this connection: who it is, plus the details every event carries
+  const track = (event, props) => {
+    if (!Analytics.enabled() || isAdmin(socket)) return;
+    const who = socket.data.account ? socket.data.account.key : socket.data.token ? Analytics.deviceId(socket.data.token) : null;
+    const c = ctx();
+    Analytics.capture(who, event, {
+      platform: socket.data.platform, installed: !!socket.data.installed, app_version: BUILD,
+      table_code: c ? c.t.code : null, table_players: c ? c.t.players.size : null, is_host: c ? c.isHost : false,
+      new_player: socket.data.account && socket.data.account.since ? Date.now() - socket.data.account.since < NEW_PLAYER_MS : null, ...props,
+    });
+  };
 
   const limited = () => {
     const now = Date.now();
@@ -381,27 +432,31 @@ io.on('connection', (socket) => {
     return false;
   };
 
-  on('hello', async ({ token, session }, ack) => {
+  on('hello', async ({ token, session, installed }, ack) => {
     if (!validToken(token)) return ack({ ok: false, error: 'Bad token', build: BUILD });
-    socket.data.token = token;
+    socket.data.token = token; socket.data.installed = !!installed;
     socket.data.account = session ? await Accounts.fromSession(session) : null;
     if (socket.data.account) Accounts.markActive(socket.data.account.key).catch(() => {});
-    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name, admin: isAdmin(socket) } : null, sessionValid: !session || !!socket.data.account, last: lastFor() });
+    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name, key: socket.data.account.key, admin: isAdmin(socket) } : null, sessionValid: !session || !!socket.data.account, last: lastFor(), analytics: Analytics.clientConfig(token) });
   });
 
-  on('login', async ({ name, pin, mode }, ack) => {
+  on('login', async ({ name, pin, mode, known }, ack) => {
     const now = Date.now();
     socket.data.logins = (socket.data.logins || []).filter((x) => now - x < 60_000);
     if (socket.data.logins.length >= 12) return ack({ ok: false, error: 'Too many tries. Wait a minute.' });
     socket.data.logins.push(now);
     const r = mode === 'reset' ? await Accounts.setNewPin(name, pin) : await Accounts.login(name, pin, mode === 'new' ? 'new' : 'back');
-    if (!r.ok) return ack(r);
-    socket.data.account = { key: r.key, name: r.name };
+    if (!r.ok) {
+      track('signin_failed', { reason: r.taken ? 'taken' : r.notFound ? 'not_found' : mode === 'reset' && /expired/i.test(r.error || '') ? 'expired_reset' : /Too many/i.test(r.error || '') ? 'locked' : /Wrong PIN/i.test(r.error || '') ? 'wrong_pin' : 'other', method: mode === 'new' ? 'new' : mode === 'reset' ? 'reset' : 'back' });
+      return ack(r);
+    }
+    socket.data.account = { key: r.key, name: r.name, since: r.since || 0 };
+    if (!isAdmin(socket)) { Analytics.link(r.key, socket.data.token); track('signed_in', { method: r.newPin ? 'reset' : r.created ? 'new' : 'back', known_on_device: Number(known) || 0 }); }
     Accounts.markActive(r.key).catch(() => {});
     if (r.created) Accounts.bumpStat('signups').catch(() => {});
     const c = ctx();
     if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
-    ack({ ok: true, session: r.session, name: r.name, created: r.created, newPin: !!r.newPin, last: lastFor(), admin: isAdmin(socket) });
+    ack({ ok: true, session: r.session, name: r.name, key: r.key, created: r.created, newPin: !!r.newPin, last: lastFor(), admin: isAdmin(socket) });
   });
 
   // ---- feedback from players ----
@@ -417,6 +472,7 @@ io.on('connection', (socket) => {
     const c = ctx();
     const t = await Accounts.fbCreate({ key: socket.data.account.key, name: socket.data.account.name, kind: ['idea', 'problem', 'other'].includes(kind) ? kind : 'other', text: msg, code: c ? c.t.code : null, device: deviceOf(socket) });
     alertAdminsFeedback(t);
+    track('feedback_sent', { kind: t.kind, from: c ? 'table' : 'home' });
     ack({ ok: true, item: fbUser(t) });
   });
   on('fbMine', async (_, ack) => {
@@ -434,7 +490,9 @@ io.on('connection', (socket) => {
   });
   on('fbRead', async ({ id }, ack) => {
     if (!socket.data.account) return ack({ ok: false });
-    const t = await Accounts.fbUpdate(id, (x) => { if (x.key !== socket.data.account.key || !x.unread) return false; x.unread = false; });
+    let wasUnread = false;
+    const t = await Accounts.fbUpdate(id, (x) => { if (x.key !== socket.data.account.key || !x.unread) return false; x.unread = false; wasUnread = true; });
+    if (t && wasUnread) { const lastAdmin = [...t.msgs].reverse().find((m) => m.from === 'admin'); track('feedback_read', { hours_after_reply: lastAdmin ? Math.round((Date.now() - lastAdmin.at) / 360000) / 10 : null }); }
     ack({ ok: !!t });
   });
 
@@ -463,6 +521,7 @@ io.on('connection', (socket) => {
     });
     if (!t) return ack({ ok: false, error: 'That message is gone.' });
     tellPlayerFeedback(t, msg || null);
+    if (t.key && !ADMINS.has(t.key)) Analytics.capture(t.key, 'feedback_answered', { status: t.status, has_text: !!msg, hours_to_answer: Math.round((Date.now() - t.at) / 360000) / 10, kind: t.kind, app_version: BUILD });
     ack({ ok: true, item: fbAdmin(t) });
   });
   on('adminFbPin', async ({ id }, ack) => {
@@ -471,6 +530,7 @@ io.on('connection', (socket) => {
     const name = await Accounts.allowPinReset(t0.name);
     if (!name) return ack({ ok: false, error: 'That player no longer exists.' });
     const t = await Accounts.fbUpdate(id, (x) => { x.status = 'done'; x.adminUnread = false; x.unread = true; x.msgs.push({ from: 'admin', text: `Done. Sign in as ${name} within a day and you’ll pick a new PIN.`, at: Date.now() }); });
+    if (t.key) Analytics.capture(t.key, 'pin_reset_allowed', { hours_waiting: Math.round((Date.now() - t.at) / 360000) / 10, app_version: BUILD });
     ack({ ok: true, item: fbAdmin(t) });
   });
 
@@ -487,6 +547,7 @@ io.on('connection', (socket) => {
     if (!open) {
       const t = await Accounts.fbCreate({ key, name: ck.name, kind: 'pin', text: `${ck.name} forgot their PIN and asked for a reset.`, device: deviceOf(socket) });
       alertAdminsFeedback(t);
+      track('pin_reset_requested', {});
     }
     ack({ ok: true });
   });
@@ -507,11 +568,13 @@ io.on('connection', (socket) => {
   });
 
   // open a table from a link: sit back down if you have a seat, otherwise just look at it
-  on('open', async ({ code }, ack) => {
+  on('open', async ({ code, via }, ack) => {
     code = String(code || '').toUpperCase();
     const t = validCode(code) ? await freshTable(code) : null;
-    if (!t) return ack({ ok: true, exists: false, code, closed: closedInfo(code) });
-    const seat = findSeat(t);
+    const seat = t ? findSeat(t) : null;
+    const closed = t ? null : closedInfo(code);
+    track('invite_opened', { via: ['link', 'code', 'invite_card', 'start_confirm', 'closed_page'].includes(via) ? via : 'link', table_exists: !!t, closed_reason: closed ? closed.reason : null, already_seated: !!seat, table_status: t ? t.s.status : null, table_code: code });
+    if (!t) return ack({ ok: true, exists: false, code, closed });
     if (seat) {
       adoptSeat(t, seat);
       attach(socket, t, seat);
@@ -529,9 +592,13 @@ io.on('connection', (socket) => {
   });
 
   // stop getting updates from the current table but keep the seat
-  on('away', (_, ack) => { detach(socket); ack({ ok: true }); });
+  on('away', ({ why }, ack) => {
+    const c = ctx();
+    if (c && why === 'break' && c.s.status === 'playing' && c.s.order.includes(c.me)) track('break_taken', { cards_left: c.s.hands[c.me] ? c.s.hands[c.me].length : 0 });
+    detach(socket); ack({ ok: true });
+  });
 
-  on('create', (_, ack) => {
+  on('create', ({ from, hadInvite }, ack) => {
     if (!socket.data.token) return ack({ ok: false, error: 'Not ready yet. Try again.' });
     if (!needAccount(ack)) return;
     if (tables.size >= MAX_TABLES) return ack({ ok: false, error: 'The server is full right now. Try again later.' });
@@ -542,17 +609,19 @@ io.on('connection', (socket) => {
     t.players.set(id, p);
     attach(socket, t, p);
     ack({ ok: true, code: t.code });
+    track('table_created', { from: ['home', 'join_sheet', 'closed_page', 'start_confirm'].includes(from) ? from : 'home', had_pending_invite: !!hadInvite });
     alertAdmins('open', t, p.name).catch(() => {});
   });
 
-  on('join', async ({ code }, ack) => {
+  on('join', async ({ code, via }, ack) => {
+    const joinVia = ['link', 'code', 'invite_card', 'rejoin'].includes(via) ? via : 'link';
     if (!socket.data.token) return ack({ ok: false, error: 'Not ready yet. Try again.' });
     if (!needAccount(ack)) return;
     code = String(code || '').toUpperCase();
     const t = validCode(code) ? await freshTable(code) : null;
     if (!t) return ack({ ok: false, error: `No table with code ${code}. It may have ended. Ask for a new link.` });
     const mine = findSeat(t);
-    if (mine) { adoptSeat(t, mine); attach(socket, t, mine); return ack({ ok: true, code }); }
+    if (mine) { adoptSeat(t, mine); attach(socket, t, mine); track('table_joined', { via: 'rejoin', as: t.s.order.includes(mine.id) || t.s.status === 'lobby' ? 'player' : 'watcher', table_status: t.s.status }); return ack({ ok: true, code }); }
     if (t.players.size >= MAX_PLAYERS) return ack({ ok: false, error: 'That table is full (10 players).' });
     const akey = socket.data.account.key;
     if (t.s.settings && t.s.settings.approve && !(t.allowed && t.allowed.has(akey))) {
@@ -563,6 +632,7 @@ io.on('connection', (socket) => {
       const host = t.players.get(t.s.host);
       if (host) for (const sid of host.sockets) io.to(sid).emit('joinRequest', { code, name: req.name });
       broadcast(t, false);
+      track('join_requested', { table_code: code });
       return ack({ ok: false, waiting: true, code, host: host ? host.name : 'the host' });
     }
     if (t.allowed) t.allowed.delete(akey);
@@ -574,6 +644,7 @@ io.on('connection', (socket) => {
     t.players.set(id, p);
     attach(socket, t, p);
     io.to(code).emit('presence', { code, type: 'joined', id, name: p.name, status: t.s.status });
+    track('table_joined', { via: joinVia, as: t.s.status === 'playing' ? 'watcher' : 'player', table_status: t.s.status });
     ack({ ok: true, code });
   });
 
@@ -585,6 +656,7 @@ io.on('connection', (socket) => {
     c.t.requests.delete(key);
     if (allow) { c.t.allowed = c.t.allowed || new Set(); c.t.allowed.add(key); }
     for (const sid of req.sockets) io.to(sid).emit(allow ? 'admitted' : 'declined', { code: c.t.code, host: c.p.name });
+    if (!ADMINS.has(key)) Analytics.capture(key, 'join_answered', { answer: allow ? 'admitted' : 'declined', seconds_waiting: Math.round((Date.now() - (req.at || Date.now())) / 1000), table_code: c.t.code, app_version: BUILD });
     broadcast(c.t, false);
     ack({ ok: true });
   });
@@ -656,13 +728,22 @@ io.on('connection', (socket) => {
   }
 
   on('vapid', (_, ack) => ack({ ok: !!vapidPublic, key: vapidPublic }));
-  on('pushSub', async ({ sub }, ack) => {
+  on('pushSub', async ({ sub, fresh, from }, ack) => {
     if (!socket.data.account) return ack({ ok: false });
     const ok = await Accounts.savePush(socket.data.account.key, sub).catch(() => false);
+    if (ok && fresh) track('alerts_enabled', { asked_from: ['menu', 'round_over', 'admin', 'home'].includes(from) ? from : 'menu' });
     ack({ ok });
   });
 
-  on('leave', (_, ack) => { const c = ctx(); if (c) removePlayer(c.t, c.me); ack({ ok: true }); });
+  on('leave', (_, ack) => {
+    const c = ctx();
+    if (c) {
+      const when = c.s.status === 'lobby' ? 'lobby' : c.s.status === 'playing' && c.s.order.includes(c.me) ? 'mid_round' : 'between_rounds';
+      track('player_left', { when, was_host: c.isHost, cards_left: c.s.hands && c.s.hands[c.me] ? c.s.hands[c.me].length : 0 });
+      removePlayer(c.t, c.me);
+    }
+    ack({ ok: true });
+  });
 
   on('leaderboard', async ({ game, period, limit }, ack) => {
     const g = Accounts.GAMES[game] ? game : 'all';
@@ -716,6 +797,7 @@ io.on('connection', (socket) => {
   // anyone at the table can reset the idle countdown
   on('keepOpen', (_, ack) => {
     const c = ctx(); if (!c) return ack({ ok: false });
+    track('table_kept_open', { seconds_left: c.t.warnedFor ? Math.max(0, Math.round((c.t.warnedFor - Date.now()) / 1000)) : null });
     c.t.lastActive = Date.now(); c.t.emptySince = null; c.t.warnedFor = null;
     io.to(c.t.code).emit('idleWarn', { code: c.t.code, closesAt: null, by: c.p.name });
     ack({ ok: true });
@@ -743,31 +825,40 @@ io.on('connection', (socket) => {
   on('play', ({ i, color, called }, ack) => {
     const c = ctx(); if (!c || !Number.isInteger(i)) return ack({ ok: false });
     const ok = act(c.t, (s) => E.applyPlay(s, c.me, i, color, !!called));
+    if (ok) { roundStat(c.t, 'plays'); if (called) roundStat(c.t, 'calls'); } else track('action_refused', { action: 'play', error: c.s.status !== 'playing' ? 'round_not_running' : c.s.order[c.s.turn] !== c.me ? 'not_your_turn' : 'card_not_allowed' });
     ack({ ok, error: ok ? null : 'That card can’t be played right now.' });
     if (ok && c.s.status === 'over' && c.s.winner === c.me) recordRound(c.t, 'lastcard');
   });
-  on('draw', (_, ack) => { const c = ctx(); ack({ ok: !!c && act(c.t, (s) => E.applyDraw(s, c.me)) }); });
+  on('draw', (_, ack) => {
+    const c = ctx(); const ok = !!c && act(c.t, (s) => E.applyDraw(s, c.me));
+    if (ok) roundStat(c.t, 'draws'); else if (c) track('action_refused', { action: 'draw', error: c.s.order[c.s.turn] !== c.me ? 'not_your_turn' : 'already_drew' });
+    ack({ ok });
+  });
   on('pass', (_, ack) => { const c = ctx(); ack({ ok: !!c && act(c.t, (s) => E.applyPass(s, c.me)) }); });
-  on('lateCall', (_, ack) => { const c = ctx(); ack({ ok: !!c && act(c.t, (s) => E.applyLateCall(s, c.me, s.unsafeV)) }); });
+  on('lateCall', (_, ack) => { const c = ctx(); const ok = !!c && act(c.t, (s) => E.applyLateCall(s, c.me, s.unsafeV)); if (ok) roundStat(c.t, 'calls'); ack({ ok }); });
   on('catch', (_, ack) => {
     const c = ctx(); if (!c) return ack({ ok: false });
-    ack({ ok: act(c.t, (s) => s.order.includes(c.me) && s.unsafe && s.unsafe !== c.me && E.applyCatch(s, c.me, s.unsafe, s.unsafeV)) });
+    const ok = act(c.t, (s) => s.order.includes(c.me) && s.unsafe && s.unsafe !== c.me && E.applyCatch(s, c.me, s.unsafe, s.unsafeV));
+    if (ok) roundStat(c.t, 'catches');
+    ack({ ok });
   });
   on('skip', (_, ack) => {
     const c = ctx(); if (!c) return ack({ ok: false });
-    ack({ ok: act(c.t, (s) => {
+    const ok = act(c.t, (s) => {
       const cur = s.order[s.turn];
       if (s.status !== 'playing' || cur === c.me || !s.order.includes(c.me) || Date.now() - (s.turnAt || 0) < IDLE_SKIP_MS) return false;
       return E.applySkipIdle(s, cur);
-    }) });
+    });
+    if (ok) roundStat(c.t, 'idle_skips');
+    ack({ ok });
   });
 
   // ----- talk -----
   on('react', ({ e }, ack) => {
     const c = ctx(); if (!c || !REACTIONS.includes(e)) return ack({ ok: false });
-    io.to(c.t.code).emit('react', { e, by: c.me, code: c.t.code }); ack({ ok: true });
+    io.to(c.t.code).emit('react', { e, by: c.me, code: c.t.code }); track('reaction_sent', { emoji: e }); ack({ ok: true });
   });
-  on('chat', ({ text }, ack) => {
+  on('chat', ({ text, quick }, ack) => {
     const c = ctx(); if (!c) return ack({ ok: false });
     const msg = cleanText(text);
     if (!msg) return ack({ ok: false });
@@ -780,6 +871,7 @@ io.on('connection', (socket) => {
     io.to(c.t.code).emit('chat', { ...m, code: c.t.code });
     if (c.t.observers) for (const sid of c.t.observers) io.to(sid).emit('chat', { ...m, code: c.t.code });
     Accounts.logChat({ ...m, code: c.t.code }).catch(() => {});
+    track('chat_sent', { quick_reply: !!quick, between_rounds: c.s.status !== 'playing' });
     markDirty(c.t);
     ack({ ok: true });
   });
@@ -851,6 +943,8 @@ const CLOSED_KEEP_MS = 24 * 3600_000;
 // Close a table for good: everyone at it sees the standings and goes home.
 // reason: 'ended' (someone pressed End game) or 'idle' (nobody played for a while)
 function closeTable(t, reason, by) {
+  const host = t.players.get(t.s.host) || [...t.players.values()][0];
+  trackPlayer(t, host, 'table_closed', { reason, rounds: t.s.round || 0, players: t.players.size, minutes_open: Math.round((Date.now() - (t.created || Date.now())) / 60000) });
   const wins = t.s.wins || {};
   const standings = [...t.players.values()].sort((a, b) => (wins[b.id] || 0) - (wins[a.id] || 0) || a.joined - b.joined)
     .map((p) => ({ name: p.name, wins: wins[p.id] || 0 }));
@@ -890,7 +984,11 @@ function sweepIdle() {
     const closesAt = idleDeadline(t);
     if (now >= closesAt) { closeTable(t, 'idle'); continue; }
     const warn = now >= closesAt - IDLE_WARN_MS;
-    if (warn && t.warnedFor !== closesAt) { t.warnedFor = closesAt; io.to(t.code).emit('idleWarn', { code: t.code, closesAt, now }); }
+    if (warn && t.warnedFor !== closesAt) {
+      t.warnedFor = closesAt; io.to(t.code).emit('idleWarn', { code: t.code, closesAt, now });
+      const online = [...t.players.values()].filter(isOnline);
+      for (const p of online) trackPlayer(t, p, 'idle_warning_shown', { players_online: online.length });
+    }
     else if (!warn && t.warnedFor) { t.warnedFor = null; io.to(t.code).emit('idleWarn', { code: t.code, closesAt: null }); }
   }
   for (const [code, x] of closedTables) if (now - x.at > CLOSED_KEEP_MS) closedTables.delete(code);
@@ -908,6 +1006,7 @@ async function shutdown(sig) {
     try { await flush(); await kv.quit(); } catch (e) { console.error(e.message); }
   }
   await Accounts.close();
+  await Analytics.shutdown();
   io.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();

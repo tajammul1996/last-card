@@ -190,7 +190,7 @@ async function setNewPin(rawName, pin) {
   await set(K.acct(key), acct); await del(K.fail(key));
   const session = crypto.randomBytes(24).toString('hex');
   await set(K.sess(session), key, { ex: SESSION_TTL });
-  return { ok: true, session, key, name: acct.name, created: false, newPin: true };
+  return { ok: true, session, key, name: acct.name, created: false, newPin: true, since: acct.created || 0 };
 }
 
 /**
@@ -228,7 +228,7 @@ async function login(rawName, pin, mode) {
   }
   const session = crypto.randomBytes(24).toString('hex');
   await set(K.sess(session), key, { ex: SESSION_TTL });
-  return { ok: true, session, key, name: acct.name, created };
+  return { ok: true, session, key, name: acct.name, created, since: acct.created || Date.now() };
 }
 
 async function fromSession(token) {
@@ -236,7 +236,7 @@ async function fromSession(token) {
   const key = await get(K.sess(token));
   if (!key) return null;
   const acct = await get(K.acct(key));
-  return acct ? { key, name: acct.name } : null;
+  return acct ? { key, name: acct.name, since: acct.created || 0 } : null;
 }
 async function logout(token) { if (typeof token === 'string' && /^[a-f0-9]{48}$/.test(token)) await del(K.sess(token)); }
 

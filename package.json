@@ -5,10 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/play.test.js && node test/restart.test.js && node test/approve.test.js && node test/admin.test.js && node test/idle.test.js && node test/feedback.test.js"
+    "test": "node test/play.test.js && node test/restart.test.js && node test/approve.test.js && node test/admin.test.js && node test/idle.test.js && node test/feedback.test.js && node test/analytics.test.js"
   },
   "license": "MIT",
   "dependencies": {
+    "posthog-node": "^6.2.0",
     "redis": "^4.7.1",
     "socket.io": "^4.8.4",
     "web-push": "^3.6.7"

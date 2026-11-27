@@ -244,14 +244,15 @@ async function liveCheck() {
   else if (r.available) setHint('', `Nobody called “${r.name}” yet. Continue to make it yours.`);
   else setHint('ok', `${r.name} has played before. Continue to enter the PIN.`);
 }
-async function goName(name) {
+async function goName(name, picked = false) {
   name = (name || '').trim();
   if (name.length < 2) { $('#siErr').textContent = 'Type your name first.'; const n = $('#siName'); if (n) n.focus(); return; }
   $('#siGo').disabled = true;
   const r = await send('checkName', { name }, true);
   $('#siGo').disabled = false;
   if (!r.ok) { $('#siErr').textContent = 'Couldn’t check that name. Try again.'; return; }
-  if (!r.valid) { authName = name; setHint('bad', r.error); return; }
+  if (!r.valid) { authName = name; setHint('bad', r.error); track('signin_name_checked', { result: 'invalid', picked_known: picked }); return; }
+  track('signin_name_checked', { result: r.available ? 'new' : r.reset ? 'reset' : 'returning', picked_known: picked });
   authName = r.name; authInfo = r;
   authStep = r.available ? 'new' : r.reset ? 'reset' : 'back';
   renderAuth();
@@ -262,9 +263,9 @@ $('#siBody').addEventListener('input', (e) => {
   if (e.target.id === 'siPin') { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); if (e.target.value.length === 4 && authStep === 'back') $('#siForm').requestSubmit(); }
 });
 $('#siBody').addEventListener('click', async (e) => {
-  const k = e.target.closest('[data-known]'); if (k) { goName(k.dataset.known); return; }
+  const k = e.target.closest('[data-known]'); if (k) { if (k.id === 'gdYes') track('signin_guard_answered', { answer: 'same_person' }); goName(k.dataset.known, true); return; }
   if (e.target.closest('#siOther')) { authStep = 'name'; authName = ''; authInfo = null; renderAuth(); setTimeout(() => $('#siName').focus(), 30); return; }
-  if (e.target.closest('#gdNo')) { guardOk = true; authStep = 'new'; renderAuth(); $('#siPin').focus(); return; }
+  if (e.target.closest('#gdNo')) { track('signin_guard_answered', { answer: 'someone_else' }); guardOk = true; authStep = 'new'; renderAuth(); $('#siPin').focus(); return; }
   if (e.target.closest('#siForgot')) {
     const b = $('#siForgot'); b.disabled = true;
     const r = await send('forgotPin', { name: authName }, true);
@@ -279,7 +280,7 @@ function openSignIn(then) {
     $('#siTitle').textContent = 'Your account';
     $('#siBody').innerHTML = `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name)}<span class="tx">Signed in as<b>${esc(me.name)}</b></span></div><p class="note">Wins from every game you finish signed in go on the leaderboard.</p>`;
     $('#siGo').hidden = false; $('#siGo').textContent = 'Switch to another name';
-  } else { $('#siTitle').textContent = 'Who’s playing?'; resetAuth(); renderAuth(); }
+  } else { $('#siTitle').textContent = 'Who’s playing?'; resetAuth(); renderAuth(); track('signin_shown', { known_names: knownNames().length, trigger: then ? (curCode || view === 'invite' ? 'join' : 'create') : 'account' }); }
   $('#signin').hidden = false;
   setTimeout(() => { const n = $('#siName'); if (n && !n.value && !knownNames().length) n.focus(); }, 50);
 }
@@ -294,7 +295,7 @@ $('#siForm').addEventListener('submit', async (e) => {
   // a new name on a phone that already has a player: check once that it's really someone else
   if (authStep === 'new' && !guardOk && knownNames().some((k) => k.name.toLowerCase() !== authName.toLowerCase())) { authStep = 'guard'; renderAuth(); const y = $('#gdYes'); if (y) y.focus(); return; }
   $('#siGo').disabled = true;
-  const r = await send('login', { name: authName, pin, mode: authStep === 'new' ? 'new' : authStep === 'reset' ? 'reset' : 'back' }, true);
+  const r = await send('login', { name: authName, pin, mode: authStep === 'new' ? 'new' : authStep === 'reset' ? 'reset' : 'back', known: knownNames().filter((k) => k.name.toLowerCase() !== authName.toLowerCase()).length }, true);
   $('#siGo').disabled = false;
   if (!r.ok) {
     if (r.taken) { authStep = 'name'; renderAuth(); setHint('bad', r.error); return; }
@@ -302,8 +303,8 @@ $('#siForm').addEventListener('submit', async (e) => {
     const p = $('#siPin'); if (p) { p.value = ''; p.focus(); }
     return;
   }
-  me = { name: r.name, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
-  rememberName(r.name); resetAuth(); loadFb();
+  me = { name: r.name, key: r.key, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
+  rememberName(r.name); resetAuth(); loadFb(); phWho();
   $('#signin').hidden = true;
   toast(r.created ? `Welcome, ${r.name}! Remember your PIN to keep your wins.` : r.newPin ? `New PIN saved. Welcome back, ${r.name}!` : `Signed in as ${r.name}`);
   const then = afterSignIn; afterSignIn = null;
@@ -311,6 +312,7 @@ $('#siForm').addEventListener('submit', async (e) => {
 });
 async function switchUser() {
   await send('logout', { session }, true);
+  if (ph) { try { ph.reset(); phSuper(); } catch (e) {} }
   me = null; session = ''; store('lc-session', ''); last = null;
   if (view === 'game') { curCode = null; G = null; setHash(''); }
   $('#signin').hidden = true;
@@ -319,12 +321,61 @@ async function switchUser() {
 function needSignIn(then) { if (me) { then(); return; } openSignIn(then); }
 function rerender() { if (view === 'admin') showAdmin(); else if (view === 'home') showHome(); else if (view === 'invite' && inviteInfo) showInvite(inviteInfo); else if (view === 'board') showBoard(boardFrom); else render(); }
 
+
+/* ---------- usage analytics (PostHog) ----------
+   Only runs when the server has a PostHog key. Started after the first hello, never for admins.
+   Replays hide everything typed, plus chat, feedback, pop-ups and the admin page. */
+let ph = null, phQueue = [], phStarted = false;
+const PH_MASK = '#chat, #msgs, #feedback, #toasts, #admin, #admThread, #fbBody, .ph-mask';
+const isStandalone = () => { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { return false; } };
+function platformName() {
+  const ua = navigator.userAgent;
+  return /iPhone|iPod/.test(ua) ? 'iphone' : /iPad/.test(ua) || (/Mac/.test(ua) && navigator.maxTouchPoints > 1) ? 'ipad' : /Android/.test(ua) ? 'android' : /Mac OS X/.test(ua) ? 'mac' : /Windows/.test(ua) ? 'windows' : /Linux/.test(ua) ? 'linux' : 'other';
+}
+function track(event, props) {
+  if (me && me.admin) return;
+  if (ph) { try { ph.capture(event, props || {}); } catch (e) {} } else if (phQueue.length < 40) phQueue.push([event, props || {}]);
+}
+function phSuper() { if (ph) ph.register({ platform: platformName(), installed: isStandalone(), app_version: build || null }); }
+function phWho() {
+  if (!ph) return;
+  if (me && me.admin) { try { ph.stopSessionRecording(); ph.opt_out_capturing(); } catch (e) {} return; }
+  if (me && me.key && ph.get_distinct_id() !== me.key) ph.identify(me.key);
+}
+function startAnalytics(cfg) {
+  if (!cfg || phStarted || (me && me.admin)) { if (!cfg) phQueue = []; return; }
+  phStarted = true;
+  const s = document.createElement('script');
+  s.async = true; s.crossOrigin = 'anonymous'; s.src = cfg.assets + '/static/array.js';
+  s.onload = () => {
+    const p = window.posthog; if (!p || !p.init) return;
+    p.init(cfg.key, {
+      api_host: cfg.host, autocapture: false, capture_pageview: false, capture_pageleave: false, disable_surveys: true,
+      persistence: 'localStorage', person_profiles: 'always', bootstrap: { distinctID: cfg.deviceId },
+      session_recording: { maskAllInputs: true, maskTextSelector: PH_MASK },
+      loaded: (x) => { ph = x; phSuper(); phWho(); phQueue.splice(0).forEach(([e, pr]) => track(e, pr)); },
+    });
+  };
+  s.onerror = () => { phQueue = []; }; // blocked (ad blocker): the game carries on without it
+  document.head.appendChild(s);
+}
+let openedAt = 0;
+function trackOpened() {
+  const q = new URLSearchParams(location.search);
+  track('app_opened', { from: q.get('src') === 'push' ? 'push' : hashCode() ? 'link' : isStandalone() ? 'home_icon' : 'direct', installed: isStandalone(), signed_in: !!me });
+  openedAt = Date.now();
+  if (q.get('src')) { try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) {} }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && phStarted && Date.now() - openedAt > 30 * 60000) trackOpened(); });
+window.addEventListener('error', (e) => { track('client_error', { message: String((e && e.message) || 'error').slice(0, 120), screen: view }); });
+
 /* ---------- connection ---------- */
 socket.on('connect', async () => {
   $('#conn').hidden = true;
-  const r = await send('hello', { token, session }, true);
+  const r = await send('hello', { token, session, installed: isStandalone() }, true);
   if (r.build) { if (!build) build = r.build; else if (r.build !== build) $('#updateBar').hidden = false; }
   if (r.ok) { me = r.account || null; if (!r.sessionValid) { session = ''; store('lc-session', ''); } last = r.last || null; }
+  if (r.ok && !phStarted) { startAnalytics(r.analytics); if (r.analytics) trackOpened(); } else phWho();
   ready = true; $('#homeNote').textContent = '';
   if (view === 'game' && curCode && !hashCode() && !practice && !adminWatching) setHash(curCode);
   setOffline(false);
@@ -402,7 +453,7 @@ $('#reloadBtn').onclick = () => location.reload();
 
 /* ---------- home ---------- */
 $('#acctBtn').onclick = () => { if (!me && view === 'home' && $('#homeAuthSlot #siName')) $('#siName').focus(); else openSignIn(); };
-async function refreshLast() { const r = await send('hello', { token, session }, true); if (r.ok) last = r.last || null; }
+async function refreshLast() { const r = await send('hello', { token, session, installed: isStandalone() }, true); if (r.ok) last = r.last || null; }
 function showHome() {
   show('home'); setHash('');
   const ab = $('#acctBtn');
@@ -428,7 +479,7 @@ function showHome() {
       <p class="rj-sub">${esc(sub)}</p>
       <button class="btn gold block" id="rejoinBtn" style="min-height:52px;font-size:16px">Rejoin table</button>
     </section>`;
-    $('#rejoinBtn').onclick = () => openTable(last.code);
+    $('#rejoinBtn').onclick = () => openTable(last.code, 'rejoin');
   } else box.innerHTML = '';
   paintInvite();
   // offline: only practice is possible
@@ -453,7 +504,7 @@ let installEvt = null;
 const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; paintInstall(); });
-window.addEventListener('appinstalled', () => { installEvt = null; store('lc-install', 'done'); paintInstall(); });
+window.addEventListener('appinstalled', () => { track('app_installed', { platform: platformName() }); installEvt = null; store('lc-install', 'done'); paintInstall(); });
 function paintInstall() {
   const show = !standalone() && !load('lc-install') && (!!installEvt || isIOS());
   $('#installBox').hidden = !show;
@@ -477,7 +528,7 @@ async function enablePush() {
     const k = await send('vapid', {}, true);
     if (!k.ok || !k.key) return false;
     const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(k.key) }));
-    const r = await send('pushSub', { sub: sub.toJSON() }, true);
+    const r = await send('pushSub', { sub: sub.toJSON(), fresh: load('lc-push') !== 'on', from: view === 'admin' ? 'admin' : view === 'game' ? (G && G.status === 'over' ? 'round_over' : 'menu') : 'home' }, true);
     if (r.ok) store('lc-push', 'on');
     return !!r.ok;
   } catch (e) { return false; }
@@ -506,10 +557,10 @@ async function loadHomeBoard() {
     : `<span>${me ? 'Finish a round to get on the board.' : 'Sign in and finish a round to get on the board.'}</span>`;
   $('#topList').innerHTML = top.length ? top.map((x) => `<li class="${x.me ? 'me' : ''}"><span class="rk">${x.rank}</span><span class="nm">${esc(x.name)}${x.me ? ' (you)' : ''}${x.online ? ONDOT : ''}</span><span class="w">${x.wins}</span></li>`).join('') : `<li><span class="nm" style="color:var(--muted)">No wins yet. ${me ? 'Finish a round to be first.' : 'Sign in and finish a round to be first.'}</span></li>`;
 }
-async function createTable() {
+async function createTable(from = 'home') {
   closeSheets();
   $('#createBtn').disabled = true;
-  const r = await send('create', {}, true);
+  const r = await send('create', { from, hadInvite: !!invitePeek }, true);
   $('#createBtn').disabled = false;
   if (r.ok) { clearInvite(); enterGame(r.code); } else $('#homeErr').textContent = r.error || 'Couldn’t start a table.';
 }
@@ -525,8 +576,8 @@ $('#createBtn').onclick = () => needSignIn(() => {
     <button class="btn block" id="ssNew" style="min-height:54px">Start my own table</button>
     <p class="note" style="text-align:center;margin:0">${esc(inv.host)}’s invite stays on your home screen while their table is open.</p>`;
   closeSheets(); $('#startSheet').hidden = false;
-  $('#ssJoin').onclick = () => { closeSheets(); openTable(inv.code); };
-  $('#ssNew').onclick = createTable;
+  $('#ssJoin').onclick = () => { track('start_while_invited', { choice: 'join_instead' }); closeSheets(); openTable(inv.code, 'invite_card'); };
+  $('#ssNew').onclick = () => { track('start_while_invited', { choice: 'own_table' }); createTable('start_confirm'); };
 });
 
 // join a friend's table by code, with a preview of whose table it is before you go in
@@ -551,13 +602,15 @@ async function jsCheck() {
   if (seq !== jsSeq) return;
   if (!r.ok) { $('#jsRes').innerHTML = `<p class="err">${esc(r.error || 'Couldn’t check that code. Try again.')}</p>`; return; }
   if (!r.exists) {
+    track('join_code_checked', { result: r.closed ? 'closed' : 'not_found' });
     inp.className = 'inp code-big bad';
     $('#jsRes').innerHTML = `<div class="js-miss">${MISS_ICON}<span class="t"><b>${r.closed ? `Table ${esc(code)} has closed` : `No open table called ${esc(code)}`}</b><span>${r.closed ? esc(closedLine(r.closed)) + ' Ask your friend for a new link.' : 'Check the letters with your friend. If their game ended, the table closed and they’ll need to send a new link.'}</span></span></div>`;
     $('#jsAct').innerHTML = '<button type="button" class="btn block" id="jsNew" style="min-height:52px">Start a new table instead</button>';
-    $('#jsNew').onclick = () => needSignIn(createTable);
+    $('#jsNew').onclick = () => needSignIn(() => createTable('join_sheet'));
     return;
   }
   const i = r.info; jsInfo = i;
+  track('join_code_checked', { result: i.full ? 'full' : 'found' });
   inp.className = 'inp code-big ok';
   const host = i.host || 'Someone';
   const st = i.status === 'lobby' ? 'in the lobby' : i.status === 'playing' ? `round ${i.round} is on` : 'between rounds';
@@ -568,7 +621,7 @@ $('#codeInp').addEventListener('input', (e) => { e.target.value = e.target.value
 $('#joinForm').addEventListener('submit', (e) => {
   e.preventDefault();
   if (!jsInfo) { if ($('#codeInp').value.length < 4) $('#jsRes').innerHTML = '<p class="err">Enter all 4 letters of the code.</p>'; return; }
-  closeSheets(); openTable(jsInfo.code);
+  closeSheets(); openTable(jsInfo.code, 'code');
 });
 
 // ---------- an invite you haven't acted on yet stays on home ----------
@@ -591,15 +644,17 @@ async function paintInvite() {
     <div class="who">${avatarFor(host.toLowerCase(), host)}<div><b>${esc(host)} is waiting for you</b><span>Table ${esc(i.code)} · ${i.players.length} player${i.players.length === 1 ? '' : 's'} · ${st}</span></div></div>
     <button class="btn gold block" id="ivJoin" style="min-height:52px;font-size:16px">Join ${esc(host)}’s table</button>
   </section>`;
-  $('#ivJoin').onclick = () => openTable(i.code);
+  $('#ivJoin').onclick = () => openTable(i.code, 'invite_card');
   $('#ivX').onclick = clearInvite;
   $('#createBtn').className = 'ng-tile';
 }
 
 /* ---------- invite (opened from a link) ---------- */
 let inviteInfo = null;
-async function openTable(code) {
-  const r = await send('open', { code }, true);
+let joinVia = 'link';
+async function openTable(code, via = 'link') {
+  joinVia = via;
+  const r = await send('open', { code, via }, true);
   if (!r.ok) { showHome(); toast(r.error || 'Couldn’t open that table.'); return; }
   if (!r.exists) { showInvite({ code, missing: true, closed: r.closed }); return; }
   if (r.seated) { enterGame(code); return; }
@@ -625,7 +680,7 @@ function showInvite(info) {
         <p class="note" style="text-align:center">Want to play with them again? Ask for a new link.</p>
       </div>`;
     $('#invHome').onclick = $('#invHome2').onclick = () => showHome();
-    $('#invNew').onclick = () => { showHome(); needSignIn(createTable); };
+    $('#invNew').onclick = () => { showHome(); needSignIn(() => createTable('closed_page')); };
     $('#invCode').onclick = () => { showHome(); $('#joinOpen').click(); };
     return;
   }
@@ -655,11 +710,11 @@ function showInvite(info) {
       <button class="linkbtn" id="invOwn" style="align-self:center;color:var(--soft)">Not now, go to home</button>
     </div>`;
   rememberInvite(info);
-  $('#invOwn').onclick = () => showHome();
+  $('#invOwn').onclick = () => { track('invite_dismissed', { table_code: info.code }); showHome(); };
   const sw = $('#invSwitch'); if (sw) sw.onclick = async () => { await switchUser(); };
   $('#invJoin').onclick = () => needSignIn(async () => {
     const btn = $('#invJoin'); if (btn) btn.disabled = true;
-    const r = await send('join', { code: info.code }, true);
+    const r = await send('join', { code: info.code, via: joinVia }, true);
     if (btn) btn.disabled = false;
     if (r.ok) { clearInvite(); enterGame(info.code); }
     else if (r.waiting) showWaiting(info, r.host);
@@ -685,7 +740,7 @@ function showWaiting(info, host) {
 socket.on('admitted', async (m) => {
   if (!m || m.code !== waitingFor) return;
   waitingFor = null;
-  const r = await send('join', { code: m.code }, true);
+  const r = await send('join', { code: m.code, via: joinVia }, true);
   if (r.ok) { enterGame(m.code); toast(`${m.host} let you in`, 'win'); } else toast(r.error || 'Couldn’t join. Try again.');
 });
 socket.on('declined', (m) => {
@@ -745,9 +800,9 @@ function enterGame(code) {
     onState(latest[code]);
   } else if (G) render();
 }
-async function goHomeKeepSeat() {
+async function goHomeKeepSeat(why) {
   closeSheets(); curCode = null; G = null;
-  await send('away', {}, true);
+  await send('away', { why: why === 'break' ? 'break' : 'home' }, true);
   await refreshLast(); showHome();
   if (last) toast('Your seat is saved. Tap Rejoin to go back.');
 }
@@ -787,7 +842,7 @@ function openLeave() {
   }
   $('#leaveSheet').hidden = false;
   const go = $('#lvGo'); if (go) go.onclick = leaveNow;
-  const br = $('#lvBreak'); if (br) br.onclick = goHomeKeepSeat;
+  const br = $('#lvBreak'); if (br) br.onclick = () => goHomeKeepSeat('break');
   setTimeout(() => { const f = $('#leaveCard .lv-opt, #leaveCard [data-close]'); if (f) f.focus({ preventScroll: true }); }, 0);
 }
 $('#menuLeave').onclick = openLeave;
@@ -874,7 +929,7 @@ $('#chatForm').addEventListener('submit', async (e) => {
   const inp = $('#chatInp'), text = inp.value.trim(); if (!text) return;
   const r = await send('chat', { text }); if (r.ok) inp.value = '';
 });
-$('#quick').addEventListener('click', (e) => { const b = e.target.closest('[data-q]'); if (b) send('chat', { text: b.dataset.q }); });
+$('#quick').addEventListener('click', (e) => { const b = e.target.closest('[data-q]'); if (b) send('chat', { text: b.dataset.q, quick: true }); });
 
 /* ---------- game state ---------- */
 function onState(s) {
@@ -955,10 +1010,10 @@ function renderLobby() {
     </div>`;
   $('#shareBtn').onclick = async () => {
     const link = inviteLink();
-    if (navigator.share) { try { await navigator.share({ title: 'Last Card', text: `Join my Last Card table! Code ${G.code}`, url: link }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
-    copyLink(link);
+    if (navigator.share) { try { await navigator.share({ title: 'Last Card', text: `Join my Last Card table! Code ${G.code}`, url: link }); track('invite_shared', { method: 'share_sheet' }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+    track('invite_shared', { method: 'copy' }); copyLink(link);
   };
-  $('#copyBtn').onclick = () => copyLink(inviteLink());
+  $('#copyBtn').onclick = () => { track('invite_shared', { method: 'copy' }); copyLink(inviteLink()); };
   const rb = $('#rulesBtn'); if (rb) rb.onclick = () => { closeSheets(); $('#rules').hidden = false; };
   const sb = $('#startBtn'); if (sb) sb.onclick = () => send('start');
   wireClaim();
@@ -1908,7 +1963,7 @@ function startPractice() {
   curCode = PRACTICE; G = null; seenV = -1; lastTopV = -1; armedCall = false; chatMsgs = []; unread = 0; recorded = null;
   show('game'); setHash(''); $('#gCode').textContent = 'Practice';
   E.dealRound(s, ['you', ...bots.map((b) => b.id)]); s.v++;
-  practiceStat();
+  practiceStat(); track('practice_started', { bots: bots.length, first_time: !load('lc-coach-done') });
   practiceEmit();
 }
 function endPractice() {
@@ -1931,6 +1986,7 @@ function practiceView() {
 }
 function practiceEmit() {
   if (!practice) return;
+  if (practice.s.status === 'over' && practice.anOver !== practice.s.round) { practice.anOver = practice.s.round; track('practice_round_finished', { won: practice.s.winner === 'you', coach_on: !!practice.coach, bots: practice.bots.length }); }
   onState(practiceView());
   practiceSchedule();
 }

@@ -20,6 +20,12 @@ services:
       # Account names that can open the admin screen, comma separated (e.g. Tajammul).
       - key: ADMIN_NAMES
         sync: false
+      # Usage analytics (PostHog). Leave POSTHOG_KEY empty to switch tracking off.
+      # POSTHOG_HOST: https://us.i.posthog.com (US) or https://eu.i.posthog.com (EU)
+      - key: POSTHOG_KEY
+        sync: false
+      - key: POSTHOG_HOST
+        sync: false
 
   # Keeps every table saved while the game server redeploys or restarts.
   - type: keyvalue
