@@ -90,6 +90,9 @@ h1,h2,h3{font-family:var(--display);font-weight:800;margin:0;text-wrap:balance}
 .knock-card p{margin:0}
 .toast .tbtn{margin-left:10px;padding:6px 12px;border-radius:999px;background:var(--gold);color:var(--gold-ink);font-weight:800;font-size:14px;pointer-events:auto}
 
+.keep-card{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:16px;border:1px dashed var(--gold-edge)}
+.keep-card .t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.keep-card .t b{font-size:15px}.keep-card .t span{font-size:13px;color:var(--muted)}
+.fixchip{align-self:flex-start;min-height:36px;padding:0 14px;border-radius:999px;border:1px solid var(--gold-edge);color:var(--gold);font-weight:700;font-size:14px;margin-top:-4px}
 /* ---------- shared ---------- */
 .screen{min-height:100%;display:flex;flex-direction:column}
 .wrap{width:100%;max-width:1240px;margin:0 auto;padding:0 20px}
@@ -830,7 +833,7 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
         </div>
         <section class="card-box" id="homeAuth" aria-labelledby="haT" hidden>
           <h2 id="haT">Who’s playing?</h2>
-          <p class="note" style="margin-top:-6px">Pick a name and a PIN. They keep your wins on the leaderboard.</p>
+          <p class="note" style="margin-top:-6px">Pick a username and play. No password needed.</p>
           <div id="homeAuthSlot"></div>
         </section>
         <div id="inviteBox"></div>
@@ -1027,6 +1030,9 @@ body.in-game .toast{font-size:13px;padding:7px 12px;max-width:340px}
 </div>
 
 <!-- join a friend with a code -->
+<div class="sheet" id="keepSheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="kpT" id="keepSheetCard"></div>
+</div>
 <div class="sheet" id="inviteSheet" hidden>
   <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="isT" id="isCard"></div>
 </div>

@@ -26,7 +26,7 @@ const enabled = () => !!(client || (KEY && process.env.ANALYTICS_MEMORY === '1')
 const deviceId = (token) => 'dev_' + crypto.createHash('sha256').update(String(token || '')).digest('hex').slice(0, 16);
 
 // property names that must never leave the server, whatever a caller passes
-const BANNED = /^(text|message_text|chat|pin|session|token|sub|subscription|endpoint|body)$/i;
+const BANNED = /^(text|message_text|chat|pin|session|token|sub|subscription|endpoint|body|email|code|who)$/i;
 function clean(props) {
   const out = {};
   for (const [k, v] of Object.entries(props || {})) {

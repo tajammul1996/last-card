@@ -132,7 +132,7 @@ function send(ev, data, quiet) {
 }
 
 /* ---------- screens + routing ---------- */
-const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet', 'joinSheet', 'startSheet', 'inviteSheet', 'admThread'];
+const SHEETS = ['signin', 'picker', 'menu', 'rules', 'howto', 'practice', 'iosInstall', 'leaveSheet', 'joinSheet', 'startSheet', 'inviteSheet', 'keepSheet', 'admThread'];
 function closeSheets(except) { for (const id of SHEETS) if (id !== except) $('#' + id).hidden = true; $('#reactPop').hidden = true; }
 function show(v) {
   if (v !== 'game' && practice) endPractice();
@@ -171,7 +171,7 @@ document.addEventListener('click', (e) => {
    (The old "I'm new / I've played before" choice made people pick wrong and create a second name.)
    Names used on this phone show as one-tap buttons, and claiming a new name on a phone that
    already played as someone else asks once whether that's you. */
-let authStep = 'name', authName = '', authInfo = null, guardOk = false, checkTimer = null, checkSeq = 0;
+let authStep = 'name', authName = '', authInfo = null, guardOk = false, checkTimer = null, checkSeq = 0, emailOn = false;
 const CHEV = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 function knownNames() {
   let k = []; try { k = JSON.parse(load('lc-known') || '[]'); } catch (e) {}
@@ -194,13 +194,34 @@ function renderAuth() {
   const nm = esc(authName), key = authName.toLowerCase();
   if (authStep === 'name') {
     const known = knownNames();
-    body.innerHTML = `${known.length ? `<section class="known" aria-labelledby="knT"><h3 class="known-h" id="knT">Played on this phone</h3>${known.map((k) => `<button type="button" class="known-btn" data-known="${esc(k.name)}">${avatarFor(k.name.toLowerCase(), k.name)}<span class="t"><b>Continue as ${esc(k.name)}</b>${k.at ? `<span>Last here ${daysAgo(k.at)}</span>` : ''}</span>${CHEV}</button>`).join('')}</section><div class="or-line" aria-hidden="true"><span>or someone else</span></div>` : '<p class="note" style="margin:-6px 0 0">New or back again, it starts the same way: type your name.</p>'}
-      <label class="fld" for="siName">Your name
-        <input id="siName" class="inp" maxlength="18" placeholder="Your name" autocomplete="nickname" autocapitalize="words" enterkeyhint="next" aria-describedby="siHint" value="${nm}">
+    body.innerHTML = `${known.length ? `<section class="known" aria-labelledby="knT"><h3 class="known-h" id="knT">Played on this phone</h3>${known.map((k) => `<button type="button" class="known-btn" data-known="${esc(k.name)}">${avatarFor(k.name.toLowerCase(), k.name)}<span class="t"><b>Continue as ${esc(k.name)}</b>${k.at ? `<span>Last here ${daysAgo(k.at)}</span>` : ''}</span>${CHEV}</button>`).join('')}</section><div class="or-line" aria-hidden="true"><span>or someone else</span></div>` : ''}
+      <label class="fld" for="siName">${emailOn ? 'Your username, or email' : 'Your username'}
+        <input id="siName" class="inp" maxlength="${emailOn ? 254 : 18}" placeholder="${emailOn ? 'sam_k or you@email.com' : 'sam_k'}" autocomplete="username" autocapitalize="none" spellcheck="false" enterkeyhint="next" aria-describedby="siHint" value="${nm}">
       </label>
-      <p class="hint" id="siHint" role="status"></p>`;
+      <p class="hint" id="siHint" role="status">New here? Pick a username: 3+ letters or numbers, no spaces.</p>
+      <div id="siFix"></div>`;
     go.textContent = 'Continue';
     if (authName) liveCheck();
+  } else if (authStep === 'emailAsk') {
+    const i = authInfo || {};
+    const stats = [i.wins ? `${i.wins} win${i.wins === 1 ? '' : 's'}` : '', i.last ? `last played ${daysAgo(i.last)}` : ''].filter(Boolean).join(' · ');
+    body.innerHTML = `<div class="who-big">${avatarFor(key, authName, { size: 'lg' })}<div><h3>Welcome back, ${nm}</h3>${stats ? `<p>${esc(stats)}</p>` : ''}</div></div>
+      <p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">We’ll email a 6-digit code to <b style="color:var(--ink)">${esc(i.emailHint || 'your email')}</b>.</p>
+      <div class="auth-links"><button type="button" class="linkbtn muted" id="siOther">Not ${nm}? Use a different name</button></div>`;
+    go.textContent = 'Email me a code';
+  } else if (authStep === 'code') {
+    const i = authInfo || {};
+    body.innerHTML = `<div><h3 style="font-size:24px;margin:0 0 6px">Check your email</h3><p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">We sent a 6-digit code to <b style="color:var(--ink)">${esc(i.to || 'your email')}</b>. It works for 10 minutes.</p></div>
+      <label class="fld" for="siCode">6-digit code
+        <input id="siCode" class="inp pin-inp" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" placeholder="••••••">
+      </label>
+      <div class="auth-links"><button type="button" class="linkbtn" id="siResend">Send a new code</button><button type="button" class="linkbtn muted" id="siOther">Use a different name or email</button></div>`;
+    go.textContent = 'Sign in';
+  } else if (authStep === 'locked') {
+    body.innerHTML = `<div class="who-big">${avatarFor(key, authName, { size: 'lg' })}<div><h3>@${nm} is taken</h3></div></div>
+      <p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">If it’s yours, open Last Card on the phone you first played on and add your email there. Then you can sign in anywhere.</p>
+      <div class="auth-links"><button type="button" class="linkbtn" id="siOther">Pick a different username</button></div>`;
+    go.hidden = true;
   } else if (authStep === 'back' || authStep === 'reset') {
     const i = authInfo || {}, reset = authStep === 'reset';
     const stats = [i.wins ? `${i.wins} win${i.wins === 1 ? '' : 's'}` : '', i.last ? `last played ${daysAgo(i.last)}` : ''].filter(Boolean).join(' · ');
@@ -237,18 +258,21 @@ function setHint(kind, text) {
 // while typing: say which way this will go, so nobody is surprised on the next screen
 async function liveCheck() {
   const inp = $('#siName'); if (!inp) return;
-  const name = inp.value.trim();
-  if (name.length < 2) { setHint('', ''); return; }
+  const name = inp.value.trim().replace(/^@/, '');
+  $('#siFix').innerHTML = '';
+  if (emailOn && name.includes('@')) { setHint('', 'We’ll email you a code to sign in.'); return; }
+  if (name.length < 2) { setHint('', name ? '' : 'New here? Pick a username: 3+ letters or numbers, no spaces.'); return; }
   const seq = ++checkSeq;
   const r = await send('checkName', { name }, true);
   if (seq !== checkSeq || !r.ok || authStep !== 'name') return;
-  if (!r.valid) setHint('bad', r.error);
-  else if (r.available) setHint('', `Nobody called “${r.name}” yet. Continue to make it yours.`);
-  else setHint('ok', `${r.name} has played before. Continue to enter the PIN.`);
+  if (!r.valid) { setHint('bad', r.error); if (r.fix) { $('#siFix').innerHTML = `<button type="button" class="fixchip" data-fix="${esc(r.fix)}">Use @${esc(r.fix)}</button>`; } }
+  else if (r.available) setHint('ok', `@${r.name} is free. Continue to start playing.`);
+  else setHint('ok', `@${r.name} has played before. Continue to sign in.`);
 }
 async function goName(name, picked = false) {
-  name = (name || '').trim();
-  if (name.length < 2) { $('#siErr').textContent = 'Type your name first.'; const n = $('#siName'); if (n) n.focus(); return; }
+  name = (name || '').trim().replace(/^@/, '');
+  if (emailOn && name.includes('@')) { await sendSignInCode(name); return; }
+  if (name.length < 2) { $('#siErr').textContent = 'Type a username first.'; const n = $('#siName'); if (n) n.focus(); return; }
   $('#siGo').disabled = true;
   const r = await send('checkName', { name }, true);
   $('#siGo').disabled = false;
@@ -256,18 +280,49 @@ async function goName(name, picked = false) {
   if (!r.valid) { authName = name; setHint('bad', r.error); track('signin_name_checked', { result: 'invalid', picked_known: picked }); return; }
   track('signin_name_checked', { result: r.available ? 'new' : r.reset ? 'reset' : 'returning', picked_known: picked });
   authName = r.name; authInfo = r;
-  authStep = r.available ? 'new' : r.reset ? 'reset' : 'back';
+  if (r.available) {
+    // a new username: no PIN, straight in (after checking once if this phone already has a player)
+    if (!guardOk && knownNames().some((k) => k.name.toLowerCase() !== r.name.toLowerCase())) { authStep = 'guard'; renderAuth(); const y = $('#gdYes'); if (y) y.focus(); return; }
+    await claimUsername(r.name); return;
+  }
+  authStep = r.reset ? 'reset' : r.protect === 'email' && emailOn ? 'emailAsk' : r.protect === 'none' ? 'locked' : 'back';
   renderAuth();
   setTimeout(() => { const p = $('#siPin'); if (p) p.focus(); }, 30);
+}
+async function claimUsername(name) {
+  $('#siGo').disabled = true;
+  const r = await send('login', { name, mode: 'guest', known: knownNames().filter((k) => k.name.toLowerCase() !== name.toLowerCase()).length }, true);
+  $('#siGo').disabled = false;
+  if (!r.ok) { authStep = 'name'; renderAuth(); setHint('bad', r.error || 'Couldn’t claim that. Try again.'); if (r.fix) $('#siFix').innerHTML = `<button type="button" class="fixchip" data-fix="${esc(r.fix)}">Use @${esc(r.fix)}</button>`; return; }
+  finishSignIn(r);
+}
+async function sendSignInCode(who) {
+  $('#siGo').disabled = true;
+  const r = await send('emailStart', { purpose: 'signin', who }, true);
+  $('#siGo').disabled = false;
+  if (!r.ok) { $('#siErr').textContent = r.error || 'Couldn’t send a code. Try again.'; return; }
+  authInfo = { ...(authInfo || {}), id: r.id, to: r.to, who }; authStep = 'code'; renderAuth();
+  setTimeout(() => { const c = $('#siCode'); if (c) c.focus(); }, 30);
+}
+function finishSignIn(r) {
+  me = { name: r.name, key: r.key, slug: r.slug, protect: r.protect, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
+  rememberName(r.name); resetAuth(); loadFb(); phWho();
+  $('#signin').hidden = true;
+  toast(r.created ? `Welcome, ${r.name}! After a round, add your email to keep your wins.` : r.newPin ? `New PIN saved. Welcome back, ${r.name}!` : `Signed in as ${r.name}`);
+  const then = afterSignIn; afterSignIn = null;
+  if (then) then(); else rerender();
 }
 $('#siBody').addEventListener('input', (e) => {
   if (e.target.id === 'siName') { authName = e.target.value; clearTimeout(checkTimer); checkTimer = setTimeout(liveCheck, 350); }
   if (e.target.id === 'siPin') { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); if (e.target.value.length === 4 && authStep === 'back') $('#siForm').requestSubmit(); }
+  if (e.target.id === 'siCode') { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6); if (e.target.value.length === 6) $('#siForm').requestSubmit(); }
 });
 $('#siBody').addEventListener('click', async (e) => {
   const k = e.target.closest('[data-known]'); if (k) { if (k.id === 'gdYes') track('signin_guard_answered', { answer: 'same_person' }); goName(k.dataset.known, true); return; }
   if (e.target.closest('#siOther')) { authStep = 'name'; authName = ''; authInfo = null; renderAuth(); setTimeout(() => $('#siName').focus(), 30); return; }
-  if (e.target.closest('#gdNo')) { track('signin_guard_answered', { answer: 'someone_else' }); guardOk = true; authStep = 'new'; renderAuth(); $('#siPin').focus(); return; }
+  if (e.target.closest('#gdNo')) { track('signin_guard_answered', { answer: 'someone_else' }); guardOk = true; await claimUsername(authName); return; }
+  const fx = e.target.closest('[data-fix]'); if (fx) { const n = $('#siName'); n.value = fx.dataset.fix; authName = fx.dataset.fix; liveCheck(); n.focus(); return; }
+  if (e.target.closest('#siResend')) { const b = $('#siResend'); b.disabled = true; await sendSignInCode((authInfo && authInfo.who) || authName); toast('New code sent'); return; }
   if (e.target.closest('#siForgot')) {
     const b = $('#siForgot'); b.disabled = true;
     const r = await send('forgotPin', { name: authName }, true);
@@ -280,7 +335,10 @@ function openSignIn(then) {
   if (!$('#signin').contains($('#siForm'))) $('#siTitle').after($('#siForm'));
   if (me) {
     $('#siTitle').textContent = 'Your account';
-    $('#siBody').innerHTML = `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name)}<span class="tx">Signed in as<b>${esc(me.name)}</b></span></div><p class="note">Wins from every game you finish signed in go on the leaderboard.</p>`;
+    $('#siBody').innerHTML = `<div class="idchip">${avatarFor(me.name.toLowerCase(), me.name)}<span class="tx">Signed in as<b>${esc(me.name)}</b></span></div>
+      ${me.protect === 'none' ? `<div class="keep-card"><span class="t"><b>Keep @${esc(me.name)} yours</b><span>${emailOn ? 'Add your email to sign in on any phone.' : 'Pick a PIN to sign in on another phone.'}</span></span><button type="button" class="btn sm light" id="keepBtn">${emailOn ? 'Add email' : 'Pick a PIN'}</button></div>` : `<p class="note" style="margin:0">${me.protect === 'email' ? 'Signs in with a code to your email.' : 'Signs in with your PIN.'}${me.protect === 'pin' && emailOn ? ' <button type="button" class="linkbtn" id="keepBtn" style="min-height:0">Add an email</button>' : ''}</p>`}
+      <p class="note">Wins from every game you finish signed in go on the leaderboard.</p>`;
+    const kb = $('#keepBtn'); if (kb) kb.onclick = () => openKeep('account');
     $('#siGo').hidden = false; $('#siGo').textContent = 'Switch to another name';
   } else { $('#siTitle').textContent = 'Who’s playing?'; resetAuth(); renderAuth(); track('signin_shown', { known_names: knownNames().length, trigger: then ? (curCode || view === 'invite' ? 'join' : 'create') : 'account' }); }
   $('#signin').hidden = false;
@@ -291,7 +349,17 @@ $('#siForm').addEventListener('submit', async (e) => {
   if (me) { await switchUser(); openSignIn(afterSignIn); return; }
   const err = $('#siErr'); err.textContent = '';
   if (authStep === 'name') { await goName($('#siName').value); return; }
-  if (authStep === 'guard') return;
+  if (authStep === 'guard' || authStep === 'locked') return;
+  if (authStep === 'emailAsk') { await sendSignInCode(authName); return; }
+  if (authStep === 'code') {
+    const code = $('#siCode').value;
+    if (!/^\d{6}$/.test(code)) { err.textContent = 'Enter the 6-digit code from the email.'; $('#siCode').focus(); return; }
+    $('#siGo').disabled = true;
+    const r = await send('emailVerify', { id: authInfo.id, code, known: knownNames().length }, true);
+    $('#siGo').disabled = false;
+    if (!r.ok) { err.textContent = r.error || 'That code didn’t work.'; const c = $('#siCode'); c.value = ''; c.focus(); return; }
+    finishSignIn(r); return;
+  }
   const pin = $('#siPin').value;
   if (!/^\d{4}$/.test(pin)) { err.textContent = authStep === 'back' ? 'Enter your 4-digit PIN.' : 'Choose a 4-digit PIN (numbers only).'; $('#siPin').focus(); return; }
   // a new name on a phone that already has a player: check once that it's really someone else
@@ -305,12 +373,7 @@ $('#siForm').addEventListener('submit', async (e) => {
     const p = $('#siPin'); if (p) { p.value = ''; p.focus(); }
     return;
   }
-  me = { name: r.name, key: r.key, slug: r.slug, admin: !!r.admin }; session = r.session; store('lc-session', session); store('lc-nick', r.name); last = r.last || last;
-  rememberName(r.name); resetAuth(); loadFb(); phWho();
-  $('#signin').hidden = true;
-  toast(r.created ? `Welcome, ${r.name}! Remember your PIN to keep your wins.` : r.newPin ? `New PIN saved. Welcome back, ${r.name}!` : `Signed in as ${r.name}`);
-  const then = afterSignIn; afterSignIn = null;
-  if (then) then(); else rerender();
+  finishSignIn(r);
 });
 async function switchUser() {
   await send('logout', { session }, true);
@@ -378,7 +441,7 @@ socket.on('connect', async () => {
   $('#conn').hidden = true;
   const r = await send('hello', { token, session, installed: isStandalone() }, true);
   if (r.build) { if (!build) build = r.build; else if (r.build !== build) $('#updateBar').hidden = false; }
-  if (r.ok) { me = r.account || null; if (!r.sessionValid) { session = ''; store('lc-session', ''); } last = r.last || null; }
+  if (r.ok) { me = r.account || null; emailOn = !!r.emailOn; if (!r.sessionValid) { session = ''; store('lc-session', ''); } last = r.last || null; }
   if (r.ok && !phStarted) { startAnalytics(r.analytics); if (r.analytics) trackOpened(); } else phWho();
   ready = true; $('#homeNote').textContent = '';
   if (view === 'game' && curCode && !hashCode() && !practice && !adminWatching) setHash(curCode);
@@ -1157,7 +1220,63 @@ function renderLobby() {
   const sb = $('#startBtn'); if (sb) sb.onclick = () => send('start');
   wireClaim();
 }
+// ---------- keep your username: add an email (or a PIN when email is off) ----------
+let keepLater = false, keepInfo = null;
+function openKeep(from) {
+  track('keep_shown', { from, method: emailOn ? 'email' : 'pin' });
+  closeSheets();
+  const card = $('#keepSheetCard');
+  const paint = (step) => {
+    const nm = esc(me.name);
+    card.innerHTML = `<span class="grab" aria-hidden="true"></span>
+      <button class="iconbtn sheet-close" data-close="keepSheet" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      ${step === 'email' ? `<div class="who-big">${avatarFor(me.name.toLowerCase(), me.name, { size: 'lg' })}<div><h3 id="kpT">Keep @${nm} yours</h3><p>Your wins, on any phone.</p></div></div>
+        <form id="kpForm" style="display:flex;flex-direction:column;gap:12px"><label class="fld" for="kpEmail">Your email<input id="kpEmail" class="inp" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com" maxlength="254"></label>
+        <p class="note" style="margin:0">Only used to sign you in on a new phone. Never shown to other players. No newsletters.</p>
+        <p class="err" id="kpErr" role="alert"></p><button class="btn gold block" style="min-height:54px">Send me a code</button></form>`
+      : step === 'code' ? `<div><h3 id="kpT" style="font-size:24px;margin:0 0 6px">Check your email</h3><p style="margin:0;font-size:16px;line-height:1.45;color:var(--soft)">We sent a 6-digit code to <b style="color:var(--ink)">${esc(keepInfo.to)}</b>. It works for 10 minutes.</p></div>
+        <form id="kpForm" style="display:flex;flex-direction:column;gap:12px"><label class="fld" for="kpCode">6-digit code<input id="kpCode" class="inp pin-inp" maxlength="6" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" placeholder="••••••"></label>
+        <p class="err" id="kpErr" role="alert"></p><button class="btn gold block" style="min-height:54px">Confirm</button><button type="button" class="linkbtn" id="kpBack" style="align-self:center">Use a different email</button></form>`
+      : step === 'pin' ? `<div class="who-big">${avatarFor(me.name.toLowerCase(), me.name, { size: 'lg' })}<div><h3 id="kpT">Keep @${nm} yours</h3><p>Pick a PIN to sign in on another phone.</p></div></div>
+        <form id="kpForm" style="display:flex;flex-direction:column;gap:12px"><label class="fld" for="kpPin">Choose a 4-digit PIN<input id="kpPin" class="inp pin-inp" maxlength="4" inputmode="numeric" pattern="[0-9]*" autocomplete="new-password" type="password" placeholder="••••"></label>
+        <p class="err" id="kpErr" role="alert"></p><button class="btn gold block" style="min-height:54px">Save PIN</button></form>`
+      : `<div class="who-big">${avatarFor(me.name.toLowerCase(), me.name, { size: 'lg' })}<div><h3 id="kpT">@${nm} is yours</h3><p>${me.protect === 'email' ? 'Sign in anywhere with a code to ' + esc(keepInfo ? keepInfo.to : 'your email') + '.' : 'Sign in on another phone with your PIN.'}</p></div></div>
+        <button class="btn gold block" data-close="keepSheet" style="min-height:54px">Done</button>`}`;
+    const f = $('#kpForm'); if (!f) return;
+    const err = $('#kpErr');
+    if (step === 'email') { setTimeout(() => $('#kpEmail').focus(), 40); f.onsubmit = async (e) => {
+      e.preventDefault(); const b = f.querySelector('.btn.gold'); b.disabled = true;
+      const r = await send('emailStart', { purpose: 'add', who: $('#kpEmail').value }, true); b.disabled = false;
+      if (!r.ok) { err.textContent = r.error || 'Couldn’t send a code.'; return; }
+      keepInfo = { id: r.id, to: r.to }; paint('code');
+    }; }
+    if (step === 'code') {
+      setTimeout(() => $('#kpCode').focus(), 40);
+      $('#kpBack').onclick = () => paint('email');
+      $('#kpCode').oninput = (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6); if (e.target.value.length === 6) f.requestSubmit(); };
+      f.onsubmit = async (e) => {
+        e.preventDefault(); const b = f.querySelector('.btn.gold'); b.disabled = true;
+        const r = await send('emailVerify', { id: keepInfo.id, code: $('#kpCode').value }, true); b.disabled = false;
+        if (!r.ok) { err.textContent = r.error || 'That code didn’t work.'; $('#kpCode').value = ''; return; }
+        me.protect = 'email'; paint('done'); if (G && G.status === 'over') render();
+      };
+    }
+    if (step === 'pin') {
+      setTimeout(() => $('#kpPin').focus(), 40);
+      $('#kpPin').oninput = (e) => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); };
+      f.onsubmit = async (e) => {
+        e.preventDefault(); const r = await send('setPin', { pin: $('#kpPin').value }, true);
+        if (!r.ok) { err.textContent = r.error || 'Couldn’t save that.'; return; }
+        me.protect = 'pin'; paint('done'); if (G && G.status === 'over') render();
+      };
+    }
+  };
+  paint(emailOn ? 'email' : 'pin');
+  $('#keepSheet').hidden = false;
+}
+
 function wireOver() {
+  const ko = $('#keepOpen'); if (ko) ko.onclick = () => openKeep('round_over');
   const ol = $('#overLeave'); if (ol) ol.onclick = openLeave;
   const ps = $('#prSetup'); if (ps) ps.onclick = () => openPracticeSetup();
   const ph = $('#prHome'); if (ph) ph.onclick = () => { endPractice(); showHome(); };
@@ -1633,7 +1752,8 @@ function overHTML() {
     <div class="over-head">${av(G.winner, 'md')}<div><p class="eyebrow">Round ${G.round || 1} is over</p><h2 id="winT">${G.winner === G.me ? 'You win!' : esc(nameOf(G.winner)) + ' wins!'}</h2></div></div>
     ${rec ? `<div class="gold-box" style="display:flex;align-items:center;gap:10px;font-size:14px">${ICON.trophy}<span>+1 win for ${G.winner === G.me ? 'you' : esc(nameOf(G.winner))}${rec.rank ? ` · now <b>#${rec.rank}</b> on the leaderboard` : ''}</span></div>` : ''}
     ${chatPeekHTML()}
-    ${askAlerts ? `<div class="alert-ask" id="alertAsk"><span class="t"><b>Get a nudge on your turn?</b><span>Only for your turn and round results.</span></span><button class="btn sm" id="alertNo">Not now</button><button class="btn sm light" id="alertYes">Turn on</button></div>` : ''}
+    ${me && me.protect === 'none' && !keepLater ? `<div class="keep-card" id="keepCard"><span class="t"><b>Keep @${esc(me.name)} yours</b><span>${emailOn ? 'Add your email so your wins follow you to any phone.' : 'Pick a PIN so you can sign in on another phone.'}</span></span><button class="btn sm light" id="keepOpen">${emailOn ? 'Add email' : 'Pick a PIN'}</button></div>` : ''}
+    ${askAlerts && !(me && me.protect === 'none' && !keepLater) ? `<div class="alert-ask" id="alertAsk"><span class="t"><b>Get a nudge on your turn?</b><span>Only for your turn and round results.</span></span><button class="btn sm" id="alertNo">Not now</button><button class="btn sm light" id="alertYes">Turn on</button></div>` : ''}
     <ol class="standings">${ps.map((u) => `<li>${av(u, 'sm')}<span class="nm">${esc(nameOf(u))}${u === G.me ? ' (you)' : ''}</span><span class="left">${count(u) ? count(u) + ' left' : 'out'}</span><span class="w">${G.wins[u] || 0} ★</span></li>`).join('')}</ol>
     ${isHost() ? `<button class="btn gold block" id="nextBtn" style="min-height:54px">Deal round ${(G.round || 1) + 1}</button><p class="note" style="text-align:center">Anyone who joined meanwhile gets dealt in.</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="endBtn">End game</button><button class="btn light" id="overBoard">Leaderboard</button></div>`
       : `${isOnline(G.host) ? `<p class="note" style="text-align:center;color:var(--soft)">Waiting for <b style="color:var(--ink)">${esc(nameOf(G.host))}</b> (host) to deal the next round</p><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><button class="btn" id="nudgeBtn">Nudge ${esc(nameOf(G.host))}</button><button class="btn light" id="overBoard">Leaderboard</button></div>` : `${hostWaitHTML('deal')}<button class="btn" id="overBoard">Leaderboard</button>`}`}

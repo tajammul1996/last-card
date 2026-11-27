@@ -16,13 +16,14 @@ function phone(name) {
   for (const e of ['presence', 'knock', 'pinged']) s.on(e, (m) => p.ev.push([e, m]));
   s.on('state', (v) => { p.view = v; });
   p.call = (ev, d) => new Promise((r) => s.emit(ev, d || {}, r));
-  p.ready = new Promise((r) => s.on('connect', async () => { await p.call('hello', { token: p.token }); p.login = name ? await p.call('login', { name, pin: '1234', mode: 'new' }) : null; r(); }));
+  p.ready = new Promise((r) => s.on('connect', async () => { await p.call('hello', { token: p.token }); p.login = name ? await p.call('login', { name, pin: '1234', mode: name === 'Ravi K' ? 'back' : 'new' }) : null; r(); }));
   return p;
 }
 const got = (p, e) => p.ev.filter(([x]) => x === e).map(([, m]) => m);
 const get = (path) => new Promise((res) => http.get(URL + path, { headers: { host: 'saylastcard.com' } }, (r) => { let b = ''; r.on('data', (c) => { b += c; }); r.on('end', () => res({ status: r.statusCode, body: b, type: r.headers['content-type'] })); }));
 (async () => {
   await ready;
+  await require('../accounts.js')._legacy('Ravi K'); // an older name with a space
   const [taj, ravi, ana, anon] = [phone('Tajammul'), phone('Ravi K'), phone('ana_b'), phone(null)];
   await Promise.all([taj.ready, ravi.ready, ana.ready, anon.ready]);
   assert(taj.login.slug === 'tajammul' && ravi.login.slug === 'ravi-k', 'slugs: ' + taj.login.slug + ' ' + ravi.login.slug);

@@ -5,7 +5,9 @@ const crypto = require('crypto');
 const SESSION_TTL = 180 * 24 * 3600; // seconds
 const LOCK_AFTER = 5;                 // wrong PINs before a name is locked
 const LOCK_SECONDS = 600;
-const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{1,17}$/u;
+const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{1,17}$/u;      // older names (spaces allowed) keep working
+const NEW_NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N}._-]{2,17}$/u;    // new usernames: 3–18, no spaces
+const Mailer = require('./mailer');
 const ALL = 'all';
 const GAMES = { lastcard: 'Last Card' };
 
@@ -99,20 +101,24 @@ const hashPin = (pin, salt) => new Promise((res, rej) => crypto.scrypt(String(pi
  * Sign in, or claim a new name. Returns { ok, session, name, created } or { ok:false, error }.
  */
 const NAME_ERR = 'Use 2–18 letters or numbers (spaces, dots and dashes are fine).';
+const NEW_NAME_ERR = 'Usernames are 3–18 letters or numbers, no spaces. _ . - are fine.';
+const fixName = (name) => { const f = name.replace(/\s+/g, '_').replace(/[^\p{L}\p{N}._-]/gu, '').slice(0, 18); return NEW_NAME_RE.test(f) ? f : null; };
+// how an account is kept safe: 'email' (codes by email), 'pin' (older accounts), or 'none' (played with just a username)
+const protectOf = (a) => (a.email ? 'email' : a.hash ? 'pin' : 'none');
+const maskEmail = (e) => { const [u, d] = String(e).split('@'); return (u.length <= 2 ? u[0] + '•' : u[0] + '•••' + u[u.length - 1]) + '@' + d; };
 
 /** Free names close to the one asked for, e.g. "John" -> "John R", "John 7", "Johnny". */
 async function suggestNames(name, n = 3) {
-  const base = name.split(' ')[0].slice(0, 14);
+  const base = name.split(' ')[0].replace(/[^\p{L}\p{N}._-]/gu, '').slice(0, 13) || 'player';
   const letters = 'ABCDEFGHJKLMNPRSTVW';
   const pool = [
-    `${base} ${letters[crypto.randomInt(letters.length)]}`, `${base} ${crypto.randomInt(2, 99)}`,
-    `${base} ${letters[crypto.randomInt(letters.length)]}`,
-    `${base}_${crypto.randomInt(10, 99)}`, `${base} ${crypto.randomInt(100, 999)}`,
+    `${base}_${letters[crypto.randomInt(letters.length)].toLowerCase()}`, `${base}${crypto.randomInt(2, 99)}`,
+    `${base}_${crypto.randomInt(10, 99)}`, `${base}.${letters[crypto.randomInt(letters.length)].toLowerCase()}`, `${base}${crypto.randomInt(100, 999)}`,
   ];
   const out = [];
   for (const c of pool) {
     if (out.length >= n) break;
-    if (!NAME_RE.test(c) || out.some((o) => keyOf(o) === keyOf(c))) continue;
+    if (!NEW_NAME_RE.test(c) || out.some((o) => keyOf(o) === keyOf(c))) continue;
     if (!(await get(K.acct(keyOf(c))))) out.push(c);
   }
   return out;
@@ -121,13 +127,14 @@ async function suggestNames(name, n = 3) {
 /** Live check while someone types: is the name valid, and is it free? */
 async function checkName(rawName) {
   const name = cleanName(rawName);
-  if (!NAME_RE.test(name)) return { ok: true, valid: false, error: NAME_ERR };
+  if (!NAME_RE.test(name)) return { ok: true, valid: false, error: name.length < 3 ? NEW_NAME_ERR : NAME_ERR, fix: fixName(name) };
   const key = keyOf(name);
   const acct = await get(K.acct(key));
+  if (!acct && !NEW_NAME_RE.test(name)) return { ok: true, valid: false, error: /\s/.test(name) ? 'No spaces in usernames.' : NEW_NAME_ERR, fix: fixName(name) };
   if (!acct) return { ok: true, valid: true, available: true, name };
   // a little about the player, so "Welcome back" shows the right person (all of it is on the public leaderboard anyway)
   const wins = await zscore(K.wins(ALL), key), last = r ? Number(await r.hGet(K.last, key)) || null : ((await hgetall(K.last))[key] || null);
-  return { ok: true, valid: true, available: false, name: acct.name, wins: Math.round(wins || 0), last, reset: !!acct.reset, suggestions: await suggestNames(acct.name) };
+  return { ok: true, valid: true, available: false, name: acct.name, wins: Math.round(wins || 0), last, reset: !!acct.reset, protect: protectOf(acct), emailHint: acct.email ? maskEmail(acct.email) : null, suggestions: await suggestNames(acct.name) };
 }
 async function zscore(k, member) {
   if (r) return (await r.zScore(k, member)) || 0;
@@ -205,9 +212,22 @@ async function setNewPin(rawName, pin) {
  * mode 'back': sign in to an existing name with its PIN.
  * Returns { ok, session, key, name, created } or { ok:false, error, taken?, notFound?, suggestions? }.
  */
+async function newSession(key, acct, created) {
+  const session = crypto.randomBytes(24).toString('hex');
+  await set(K.sess(session), key, { ex: SESSION_TTL });
+  return { ok: true, session, key, name: acct.name, created: !!created, since: acct.created || Date.now(), protect: protectOf(acct) };
+}
 async function login(rawName, pin, mode) {
   const name = cleanName(rawName);
+  if (mode === 'guest') { // a new username, no PIN: add an email later to keep it
+    if (!NEW_NAME_RE.test(name)) return { ok: false, error: /\s/.test(name) ? 'No spaces in usernames.' : NEW_NAME_ERR, fix: fixName(name) };
+    const key = keyOf(name);
+    const fresh = { name, created: Date.now() };
+    if (!(await set(K.acct(key), fresh, { nx: true }))) return { ok: false, taken: true, error: `@${name} is taken. Pick another.`, suggestions: await suggestNames(name) };
+    return newSession(key, fresh, true);
+  }
   if (!NAME_RE.test(name)) return { ok: false, error: NAME_ERR };
+  if (mode === 'new' && !NEW_NAME_RE.test(name)) return { ok: false, error: /\s/.test(name) ? 'No spaces in usernames.' : NEW_NAME_ERR, fix: fixName(name) };
   if (!/^\d{4}$/.test(String(pin || ''))) return { ok: false, error: 'Your PIN is 4 digits.' };
   const key = keyOf(name);
   const fails = (await get(K.fail(key))) || 0;
@@ -223,6 +243,8 @@ async function login(rawName, pin, mode) {
     acct = fresh; created = true;
   } else if (!acct) {
     return { ok: false, notFound: true, error: `No player called “${name}” yet.` };
+  } else if (!acct.hash) {
+    return { ok: false, error: acct.email ? `${acct.name} signs in with an email code.` : `${acct.name} isn’t protected yet. Open Last Card on the phone you first used and add your email.` };
   }
   if (!created) {
     const ok = crypto.timingSafeEqual(Buffer.from(await hashPin(pin, acct.salt), 'hex'), Buffer.from(acct.hash, 'hex'));
@@ -233,9 +255,80 @@ async function login(rawName, pin, mode) {
     }
     await del(K.fail(key));
   }
-  const session = crypto.randomBytes(24).toString('hex');
-  await set(K.sess(session), key, { ex: SESSION_TTL });
-  return { ok: true, session, key, name: acct.name, created, since: acct.created || Date.now() };
+  return newSession(key, acct, created);
+}
+
+// ---------- email: add one to keep your username, then sign in anywhere with a code ----------
+const CODE_TTL = 600, CODE_TRIES = 5;
+const emailKey = (e) => 'lc:email:' + crypto.createHash('sha256').update(e).digest('hex').slice(0, 32);
+const cleanEmail = (e) => { const x = String(e || '').trim().toLowerCase(); return /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/.test(x) && x.length <= 254 ? x : null; };
+const codeHash = (id, code) => crypto.createHash('sha256').update(id + ':' + code).digest('hex');
+/** Send a 6-digit code. purpose 'add': to a new address for this account. 'signin': to the address on file for a username or email. */
+async function emailStart({ purpose, key, who }) {
+  if (!Mailer.enabled()) return { ok: false, error: 'Email sign-in isn’t switched on yet.' };
+  let acctKey, email, acct;
+  if (purpose === 'add') {
+    acct = key && (await get(K.acct(key))); if (!acct) return { ok: false, error: 'Sign in first.' };
+    email = cleanEmail(who); if (!email) return { ok: false, error: 'That doesn’t look like an email address.' };
+    const owner = await get(emailKey(email));
+    if (owner && owner !== key) return { ok: false, error: 'That email is already on another username.' };
+    acctKey = key;
+  } else {
+    const asEmail = cleanEmail(who);
+    if (asEmail) { acctKey = await get(emailKey(asEmail)); if (!acctKey) return { ok: false, error: 'No username uses that email.' }; }
+    else acctKey = keyOf(cleanName(String(who || '').replace(/^@/, '')));
+    acct = acctKey && (await get(K.acct(acctKey)));
+    if (!acct) return { ok: false, error: 'No player with that username.' };
+    if (!acct.email) return { ok: false, error: acct.hash ? `${acct.name} signs in with a PIN.` : `${acct.name} has no email yet.` };
+    email = acct.email;
+  }
+  const sentKey = 'lc:codesent:' + emailKey(email).slice(9);
+  const recent = (await get(sentKey)) || [];
+  const now = Date.now(), fresh = recent.filter((t) => now - t < 600_000);
+  if (fresh.length >= 3) return { ok: false, error: 'We’ve sent a few codes already. Wait a few minutes and try again.' };
+  const id = crypto.randomBytes(12).toString('hex'), code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+  await set('lc:code:' + id, { purpose, key: acctKey, email, hash: codeHash(id, code), tries: 0 }, { ex: CODE_TTL });
+  await set(sentKey, [...fresh, now], { ex: 600 });
+  if (!(await Mailer.sendCode(email, code, acct.name))) return { ok: false, error: 'We couldn’t send the email. Try again in a moment.' };
+  return { ok: true, id, to: maskEmail(email) };
+}
+/** Check a code. 'add' saves the email on the account; 'signin' starts a session. */
+async function emailVerify({ id, code, key }) {
+  if (typeof id !== 'string' || !/^[a-f0-9]{24}$/.test(id)) return { ok: false, error: 'That code has expired. Ask for a new one.' };
+  const c = await get('lc:code:' + id);
+  if (!c) return { ok: false, error: 'That code has expired. Ask for a new one.' };
+  if (!/^\d{6}$/.test(String(code || ''))) return { ok: false, error: 'The code is 6 digits.' };
+  if (codeHash(id, String(code)) !== c.hash) {
+    c.tries++;
+    if (c.tries >= CODE_TRIES) { await del('lc:code:' + id); return { ok: false, error: 'Too many wrong codes. Ask for a new one.' }; }
+    await set('lc:code:' + id, c, { ex: CODE_TTL });
+    return { ok: false, error: `That code isn’t right. ${CODE_TRIES - c.tries} ${CODE_TRIES - c.tries === 1 ? 'try' : 'tries'} left.` };
+  }
+  await del('lc:code:' + id);
+  const acct = await get(K.acct(c.key)); if (!acct) return { ok: false, error: 'That player no longer exists.' };
+  if (c.purpose === 'add') {
+    if (key !== c.key) return { ok: false, error: 'Sign in as that player first.' };
+    const owner = await get(emailKey(c.email));
+    if (owner && owner !== c.key) return { ok: false, error: 'That email is already on another username.' };
+    if (acct.email && acct.email !== c.email) await del(emailKey(acct.email));
+    acct.email = c.email; await set(K.acct(c.key), acct); await set(emailKey(c.email), c.key);
+    return { ok: true, added: true, to: maskEmail(c.email), protect: 'email' };
+  }
+  await del(K.fail(c.key));
+  return newSession(c.key, acct, false);
+}
+/** A username with nothing protecting it can pick a PIN instead (when email isn't switched on). */
+async function setPinOnce(key, pin) {
+  const acct = key && (await get(K.acct(key))); if (!acct) return { ok: false, error: 'Sign in first.' };
+  if (acct.hash || acct.email) return { ok: false, error: 'Your username is already protected.' };
+  if (!/^\d{4}$/.test(String(pin || ''))) return { ok: false, error: 'Your PIN is 4 digits.' };
+  acct.salt = crypto.randomBytes(12).toString('hex'); acct.hash = await hashPin(pin, acct.salt);
+  await set(K.acct(key), acct);
+  return { ok: true, protect: 'pin' };
+}
+async function accountInfo(key) {
+  const a = key && (await get(K.acct(key))); if (!a) return null;
+  return { protect: protectOf(a), emailHint: a.email ? maskEmail(a.email) : null };
 }
 
 async function fromSession(token) {
@@ -243,7 +336,7 @@ async function fromSession(token) {
   const key = await get(K.sess(token));
   if (!key) return null;
   const acct = await get(K.acct(key));
-  return acct ? { key, name: acct.name, since: acct.created || 0 } : null;
+  return acct ? { key, name: acct.name, since: acct.created || 0, protect: protectOf(acct) } : null;
 }
 async function logout(token) { if (typeof token === 'string' && /^[a-f0-9]{48}$/.test(token)) await del(K.sess(token)); }
 
@@ -442,4 +535,7 @@ async function isMate(key, other) { return (await zscore('lc:mates:' + key, othe
 const persistent = () => !!r;
 async function close() { if (r) { try { await flushChat(); await r.quit(); } catch (e) {} } }
 
-module.exports = { slugOf, findBySlug, nameOfKey, noteMates, mates, isMate, init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, allowPinReset, setNewPin, fbCreate, fbGet, fbList, fbUpdate, fbTodo, FB_STATUS, bumpStat, markActive, stats, GAMES };
+// tests only: an account made under the older rules (names with spaces, PIN 1234)
+async function _legacy(name) { const salt = 'testsalt'; await set(K.acct(keyOf(name)), { name, salt, hash: await hashPin('1234', salt), created: Date.now() }); }
+
+module.exports = { _legacy, emailStart, emailVerify, setPinOnce, accountInfo, emailOn: () => Mailer.enabled(), slugOf, findBySlug, nameOfKey, noteMates, mates, isMate, init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, allowPinReset, setNewPin, fbCreate, fbGet, fbList, fbUpdate, fbTodo, FB_STATUS, bumpStat, markActive, stats, GAMES };

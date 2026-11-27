@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/play.test.js && node test/restart.test.js && node test/approve.test.js && node test/admin.test.js && node test/idle.test.js && node test/feedback.test.js && node test/analytics.test.js && node test/links.test.js"
+    "test": "node test/play.test.js && node test/restart.test.js && node test/approve.test.js && node test/admin.test.js && node test/idle.test.js && node test/feedback.test.js && node test/analytics.test.js && node test/links.test.js && node test/email.test.js"
   },
   "license": "MIT",
   "dependencies": {

@@ -507,7 +507,7 @@ io.on('connection', (socket) => {
     socket.data.token = token; socket.data.installed = !!installed;
     socket.data.account = session ? await Accounts.fromSession(session) : null;
     if (socket.data.account) Accounts.markActive(socket.data.account.key).catch(() => {});
-    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name, key: socket.data.account.key, slug: Accounts.slugOf(socket.data.account.key), admin: isAdmin(socket) } : null, sessionValid: !session || !!socket.data.account, last: lastFor(), analytics: Analytics.clientConfig(token) });
+    ack({ ok: true, build: BUILD, account: socket.data.account ? { name: socket.data.account.name, key: socket.data.account.key, slug: Accounts.slugOf(socket.data.account.key), protect: socket.data.account.protect || 'pin', admin: isAdmin(socket) } : null, emailOn: Accounts.emailOn(), sessionValid: !session || !!socket.data.account, last: lastFor(), analytics: Analytics.clientConfig(token) });
   });
 
   on('login', async ({ name, pin, mode, known }, ack) => {
@@ -515,18 +515,56 @@ io.on('connection', (socket) => {
     socket.data.logins = (socket.data.logins || []).filter((x) => now - x < 60_000);
     if (socket.data.logins.length >= 12) return ack({ ok: false, error: 'Too many tries. Wait a minute.' });
     socket.data.logins.push(now);
-    const r = mode === 'reset' ? await Accounts.setNewPin(name, pin) : await Accounts.login(name, pin, mode === 'new' ? 'new' : 'back');
+    const r = mode === 'reset' ? await Accounts.setNewPin(name, pin) : await Accounts.login(name, pin, mode === 'guest' ? 'guest' : mode === 'new' ? 'new' : 'back');
     if (!r.ok) {
       track('signin_failed', { reason: r.taken ? 'taken' : r.notFound ? 'not_found' : mode === 'reset' && /expired/i.test(r.error || '') ? 'expired_reset' : /Too many/i.test(r.error || '') ? 'locked' : /Wrong PIN/i.test(r.error || '') ? 'wrong_pin' : 'other', method: mode === 'new' ? 'new' : mode === 'reset' ? 'reset' : 'back' });
       return ack(r);
     }
-    socket.data.account = { key: r.key, name: r.name, since: r.since || 0 };
-    if (!isAdmin(socket)) { Analytics.link(r.key, socket.data.token); track('signed_in', { method: r.newPin ? 'reset' : r.created ? 'new' : 'back', known_on_device: Number(known) || 0 }); }
+    socket.data.account = { key: r.key, name: r.name, since: r.since || 0, protect: r.protect };
+    if (!isAdmin(socket)) { Analytics.link(r.key, socket.data.token); track('signed_in', { method: r.newPin ? 'reset' : r.created ? (mode === 'guest' ? 'new_username' : 'new') : 'back', known_on_device: Number(known) || 0 }); }
     Accounts.markActive(r.key).catch(() => {});
     if (r.created) Accounts.bumpStat('signups').catch(() => {});
     const c = ctx();
     if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
-    ack({ ok: true, session: r.session, name: r.name, key: r.key, slug: Accounts.slugOf(r.key), created: r.created, newPin: !!r.newPin, last: lastFor(), admin: isAdmin(socket) });
+    ack({ ok: true, session: r.session, name: r.name, key: r.key, slug: Accounts.slugOf(r.key), protect: r.protect || 'pin', created: r.created, newPin: !!r.newPin, last: lastFor(), admin: isAdmin(socket) });
+  });
+
+  // ---- email: add one to keep your username; sign in on any phone with a code ----
+  const emailLimit = (field, max) => {
+    const now = Date.now();
+    socket.data[field] = (socket.data[field] || []).filter((x) => now - x < 600_000);
+    if (socket.data[field].length >= max) return false;
+    socket.data[field].push(now); return true;
+  };
+  on('emailStart', async ({ purpose, who }, ack) => {
+    if (!emailLimit('emailStarts', 6)) return ack({ ok: false, error: 'Too many tries. Wait a few minutes.' });
+    if (purpose === 'add' && !needAccount(ack)) return;
+    const r = await Accounts.emailStart({ purpose: purpose === 'add' ? 'add' : 'signin', key: socket.data.account && socket.data.account.key, who }).catch(() => ({ ok: false, error: 'Something went wrong. Try again.' }));
+    track(purpose === 'add' ? 'email_add_started' : 'email_signin_started', { ok: !!r.ok });
+    ack(r);
+  });
+  on('emailVerify', async ({ id, code, known }, ack) => {
+    if (!emailLimit('emailVerifies', 25)) return ack({ ok: false, error: 'Too many tries. Wait a few minutes.' });
+    const r = await Accounts.emailVerify({ id, code, key: socket.data.account && socket.data.account.key }).catch(() => ({ ok: false, error: 'Something went wrong. Try again.' }));
+    if (!r.ok) { track('email_code_failed', {}); return ack(r); }
+    if (r.added) { socket.data.account.protect = 'email'; track('email_added', {}); return ack(r); }
+    socket.data.account = { key: r.key, name: r.name, since: r.since || 0, protect: r.protect };
+    if (!isAdmin(socket)) { Analytics.link(r.key, socket.data.token); track('signed_in', { method: 'email', known_on_device: Number(known) || 0 }); }
+    Accounts.markActive(r.key).catch(() => {});
+    const c = ctx();
+    if (c && adoptSeat(c.t, c.p)) broadcast(c.t);
+    ack({ ok: true, session: r.session, name: r.name, key: r.key, slug: Accounts.slugOf(r.key), protect: r.protect, last: lastFor(), admin: isAdmin(socket) });
+  });
+  on('setPin', async ({ pin }, ack) => {
+    if (!needAccount(ack)) return;
+    if (!emailLimit('pinSets', 6)) return ack({ ok: false, error: 'Too many tries. Wait a few minutes.' });
+    const r = await Accounts.setPinOnce(socket.data.account.key, pin);
+    if (r.ok) { socket.data.account.protect = 'pin'; track('pin_added', {}); }
+    ack(r);
+  });
+  on('accountInfo', async (_, ack) => {
+    if (!socket.data.account) return ack({ ok: false });
+    ack({ ok: true, emailOn: Accounts.emailOn(), ...(await Accounts.accountInfo(socket.data.account.key)) });
   });
 
   // ---- feedback from players ----
