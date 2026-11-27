@@ -1068,6 +1068,9 @@ function renderMenu() {
   const host = isHost(), pr = !!G.practice;
   $('#menuTitle').textContent = pr ? 'Practice' : 'Table ' + G.code;
   $('#approveBtn').hidden = !host || pr;
+  $('#menuHostH').hidden = !host || pr;
+  $('#menuInvite').hidden = pr;
+  $('#menuPeopleH').textContent = pr ? 'At the table' : `At the table · ${G.players.length}`;
   $('#approveBtn').setAttribute('aria-pressed', String(!!(G.settings && G.settings.approve)));
   const canAlert = pushSupported() && !pr;
   $('#alertBtn').hidden = !canAlert;
@@ -1099,6 +1102,7 @@ function renderMenu() {
   }).join('');
 }
 let menuOpen = null;
+$('#menuInvite').onclick = () => { closeSheets(); openInviteSheet(); };
 $('#menuPlayers').addEventListener('click', (e) => {
   const mo = e.target.closest('[data-more]'); if (mo) { menuOpen = mo.dataset.more; renderMenu(); return; }
   const rm = e.target.closest('[data-rm]'); if (rm) { rm.disabled = true; send('remove', { id: rm.dataset.rm }); return; }
@@ -1472,7 +1476,7 @@ function renderPhoneTable({ prevScroll, seated, hand, myTurn, hint, R, small }) 
       <p class="lastmove ${fresh ? 'new' : ''}" aria-live="polite">${esc(lastMoveText())}</p>
       ${line ? `<p class="qhint ${myTurn ? 'mine' : ''}">${esc(line)}</p>` : ''}
     </div>
-    ${seated ? `<div class="handwrap q" id="handwrap"><div class="hbar" role="status">${pill}<div class="actions" id="actions"></div></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
+    ${seated ? `<div class="handwrap q ${myTurn ? 'myturn' : ''}" id="handwrap">${myTurn && !G.practice ? `<div class="turnbar" aria-hidden="true"><i id="turnBar" style="width:${Math.round(100 * turnLeft() / IDLE_SKIP_S)}%"></i></div>` : ''}<div class="hbar" role="status">${pill}<div class="actions" id="actions"></div></div><button class="scrollbtn l" id="scrL" aria-label="Scroll hand left" hidden>‹</button><div class="hand" id="hand"></div><button class="scrollbtn r" id="scrR" aria-label="Scroll hand right" hidden>›</button></div>`
       : watchPanelHTML()}
     ${G.status === 'over' && !G.admin ? overHTML() : ''}`;
   lastTopV = G.v; flipRing = false; qAdvance = false;
@@ -1634,7 +1638,7 @@ function doDraw() {
 }
 function updateHandEdges() {
   const el = $('#hand'), wrap = $('#handwrap'); if (!el || !wrap) return;
-  const max = el.scrollWidth - el.clientWidth, l = el.scrollLeft > 4, r = el.scrollLeft < max - 4;
+  const fan = el.classList.contains('fan'), max = el.scrollWidth - el.clientWidth, l = !fan && el.scrollLeft > 4, r = !fan && el.scrollLeft < max - 4;
   wrap.classList.toggle('more-l', l); wrap.classList.toggle('more-r', r);
   $('#scrL').hidden = !l; $('#scrR').hidden = !r;
 }
@@ -1701,8 +1705,15 @@ function renderHand(hand, myTurn, prevScroll, R) {
   }).join('');
   {
     const gap = wide ? 10 : 6, avail = el.clientWidth - (wide ? 40 : 32), n = idx.length;
-    let ov = gap; if (n > 1 && n * w + (n - 1) * gap > avail) ov = Math.max(-w * (wide ? 0.6 : 0.4), (avail - w) / (n - 1) - w);
+    // phones: up to 8 cards sit in a fan you can see all at once; more than that scroll sideways
+    const fan = !wide && n > 1 && n <= 8 && !G.admin;
+    const room = fan ? avail - 36 : avail; // the fan's outer cards lean out a little
+    let ov = gap; if (n > 1 && n * w + (n - 1) * gap > room) ov = Math.max(-w * (wide ? 0.6 : fan ? 0.62 : 0.4), (room - w) / (n - 1) - w);
+    if (fan) ov = Math.min(ov, -w * 0.22);
     el.style.setProperty('--ov', ov + 'px');
+    el.classList.toggle('fan', fan);
+    if (fan) [...el.children].forEach((c, k) => { const d = k - (n - 1) / 2; c.style.setProperty('--rot', (d * Math.min(4, 20 / (n - 1))).toFixed(1) + 'deg'); c.style.setProperty('--arc', Math.round(d * d * 1.4) + 'px'); });
+    if (fan) prevScroll = 0;
   }
   el.style.scrollBehavior = 'auto'; el.scrollLeft = prevScroll; el.style.scrollBehavior = '';
   if (scrollToPlayable && myTurn) {
@@ -1758,6 +1769,7 @@ function toggleCall() { if (!G) return; const myTurn = G.order[G.turn] === G.me;
 setInterval(() => {
   if (view !== 'game' || !G || G.status !== 'playing') return;
   const c = $('#turnClock'); if (c) c.textContent = clockText(turnLeft());
+  const tb = $('#turnBar'); if (tb) { const left = turnLeft(); tb.style.width = Math.round(100 * left / IDLE_SKIP_S) + '%'; tb.classList.toggle('low', left <= 10); }
   const hadSkip = !!$('#actions [data-a="skip"]'), needSkip = G.order.includes(G.me) && G.order[G.turn] !== G.me && turnLeft() === 0;
   if (hadSkip !== needSkip) renderActions();
 }, 1000);
