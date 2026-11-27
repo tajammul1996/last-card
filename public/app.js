@@ -340,6 +340,8 @@ function phSuper() { if (ph) ph.register({ platform: platformName(), installed: 
 function phWho() {
   if (!ph) return;
   if (me && me.admin) { try { ph.stopSessionRecording(); ph.opt_out_capturing(); } catch (e) {} return; }
+  // An admin session on this device opts PostHog out, and PostHog remembers that. Undo it for anyone else.
+  try { if (ph.has_opted_out_capturing && ph.has_opted_out_capturing()) { ph.opt_in_capturing(); ph.startSessionRecording && ph.startSessionRecording(); } } catch (e) {}
   if (me && me.key && ph.get_distinct_id() !== me.key) ph.identify(me.key);
 }
 function startAnalytics(cfg) {
