@@ -7,6 +7,7 @@ const LOCK_AFTER = 5;                 // wrong PINs before a name is locked
 const LOCK_SECONDS = 600;
 const NAME_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{1,17}$/u;
 const ALL = 'all';
+const GAMES = { lastcard: 'Last Card' };
 
 let r = null;
 const mem = { kv: new Map(), z: new Map() };
@@ -45,13 +46,17 @@ async function init(url) {
 }
 
 // ---- tiny storage layer so the same code runs with or without Redis ----
+// Display names never change, so keep them in memory: the leaderboard then needs no per-player reads.
+const names = new Map(); // account key -> display name
+const noteName = (k, v) => { if (v && v.name && k.startsWith('lc:acct:')) names.set(k.slice(8), v.name); };
 async function get(k) {
-  if (r) { const v = await r.get(k); return v ? JSON.parse(v) : null; }
+  if (r) { const v = await r.get(k); const o = v ? JSON.parse(v) : null; noteName(k, o); return o; }
   const e = mem.kv.get(k); if (!e) return null;
   if (e.exp && e.exp < Date.now()) { mem.kv.delete(k); return null; }
   return e.v;
 }
 async function set(k, v, { ex, nx } = {}) {
+  noteName(k, v);
   if (r) {
     const opts = {}; if (ex) opts.EX = ex; if (nx) opts.NX = true;
     return (await r.set(k, JSON.stringify(v), opts)) === 'OK';
@@ -86,7 +91,9 @@ async function zall(k, limit) {
   return new Map([...(mem.z.get(k) || new Map())].sort((a, b) => b[1] - a[1]).slice(0, limit));
 }
 
-function hashPin(pin, salt) { return crypto.scryptSync(String(pin), salt, 32).toString('hex'); }
+// scrypt is slow on purpose (~40 ms). The async form runs it off the game loop, so a burst of sign-ins
+// never freezes the tables that are playing.
+const hashPin = (pin, salt) => new Promise((res, rej) => crypto.scrypt(String(pin), salt, 32, (e, k) => (e ? rej(e) : res(k.toString('hex')))));
 
 /**
  * Sign in, or claim a new name. Returns { ok, session, name, created } or { ok:false, error }.
@@ -119,7 +126,7 @@ async function checkName(rawName) {
   const acct = await get(K.acct(key));
   if (!acct) return { ok: true, valid: true, available: true, name };
   // a little about the player, so "Welcome back" shows the right person (all of it is on the public leaderboard anyway)
-  const wins = await zscore(K.wins(ALL), key), last = (await hgetall(K.last))[key] || null;
+  const wins = await zscore(K.wins(ALL), key), last = r ? Number(await r.hGet(K.last, key)) || null : ((await hgetall(K.last))[key] || null);
   return { ok: true, valid: true, available: false, name: acct.name, wins: Math.round(wins || 0), last, reset: !!acct.reset, suggestions: await suggestNames(acct.name) };
 }
 async function zscore(k, member) {
@@ -186,7 +193,7 @@ async function setNewPin(rawName, pin) {
   const acct = await get(K.acct(key));
   if (!acct || !acct.reset || Date.now() - acct.reset > RESET_MS) return { ok: false, error: 'This PIN reset has expired. Ask the admin again.' };
   if (!/^\d{4}$/.test(String(pin || ''))) return { ok: false, error: 'Your PIN is 4 digits.' };
-  acct.salt = crypto.randomBytes(12).toString('hex'); acct.hash = hashPin(pin, acct.salt); delete acct.reset;
+  acct.salt = crypto.randomBytes(12).toString('hex'); acct.hash = await hashPin(pin, acct.salt); delete acct.reset;
   await set(K.acct(key), acct); await del(K.fail(key));
   const session = crypto.randomBytes(24).toString('hex');
   await set(K.sess(session), key, { ex: SESSION_TTL });
@@ -210,7 +217,7 @@ async function login(rawName, pin, mode) {
   if (mode === 'new') {
     if (acct) return { ok: false, taken: true, error: `“${acct.name}” is already taken. Pick a different name.`, suggestions: await suggestNames(acct.name) };
     const salt = crypto.randomBytes(12).toString('hex');
-    const fresh = { name, salt, hash: hashPin(pin, salt), created: Date.now() };
+    const fresh = { name, salt, hash: await hashPin(pin, salt), created: Date.now() };
     if (!(await set(K.acct(key), fresh, { nx: true }))) // someone claimed it a moment ago
       return { ok: false, taken: true, error: `“${name}” was just taken. Pick a different name.`, suggestions: await suggestNames(name) };
     acct = fresh; created = true;
@@ -218,7 +225,7 @@ async function login(rawName, pin, mode) {
     return { ok: false, notFound: true, error: `No player called “${name}” yet.` };
   }
   if (!created) {
-    const ok = crypto.timingSafeEqual(Buffer.from(hashPin(pin, acct.salt), 'hex'), Buffer.from(acct.hash, 'hex'));
+    const ok = crypto.timingSafeEqual(Buffer.from(await hashPin(pin, acct.salt), 'hex'), Buffer.from(acct.hash, 'hex'));
     if (!ok) {
       const n = await incrFail(K.fail(key));
       const left = LOCK_AFTER - n;
@@ -241,35 +248,57 @@ async function fromSession(token) {
 async function logout(token) { if (typeof token === 'string' && /^[a-f0-9]{48}$/.test(token)) await del(K.sess(token)); }
 
 /** One finished game: the winner gets a win, everyone who played gets a game played. */
+// With a single game, its board and the all-games board are the same, so only the all-games one is written.
+const boardOf = (g) => (!g || Object.keys(GAMES).length === 1 ? ALL : g);
 async function recordResult(game, winnerKey, playerKeys) {
   const ps = [...new Set(playerKeys.filter(Boolean))];
   if (ps.length < 2) return false;
-  const w = weekId();
-  for (const g of [game, ALL]) {
+  const w = weekId(), g = boardOf(game), now = Date.now();
+  lbCache.clear();
+  if (r) { // one round trip
+    const m = r.multi();
     for (const wk of [null, w]) {
-      if (winnerKey) await zincr(K.wins(g, wk), winnerKey, 1);
-      for (const p of ps) await zincr(K.played(g, wk), p, 1);
-      if (wk) { await expire(K.wins(g, wk), WEEK_TTL); await expire(K.played(g, wk), WEEK_TTL); }
+      if (winnerKey) m.zIncrBy(K.wins(g, wk), 1, winnerKey);
+      for (const p of ps) m.zIncrBy(K.played(g, wk), 1, p);
     }
+    m.expire(K.wins(g, w), WEEK_TTL); m.expire(K.played(g, w), WEEK_TTL);
+    m.hSet(K.last, Object.fromEntries(ps.map((p) => [p, String(now)])));
+    await m.exec();
+    return true;
   }
-  const now = Date.now();
+  for (const wk of [null, w]) {
+    if (winnerKey) await zincr(K.wins(g, wk), winnerKey, 1);
+    for (const p of ps) await zincr(K.played(g, wk), p, 1);
+  }
   for (const p of ps) await hset(K.last, p, now);
   return true;
 }
 
 /** Ranked rows for one game ('all' = every game) and period ('week' | 'all'), plus your own row wherever you are. */
-async function leaderboard(game, limit = 50, period = 'all', mineKey = null) {
-  const g = game || ALL;
+const lbCache = new Map(); // board+period -> { at, rows }
+const LB_CACHE_MS = 30_000;
+async function rankedRows(g, period) {
+  const ck = g + ':' + period, hit = lbCache.get(ck);
+  if (hit && Date.now() - hit.at < LB_CACHE_MS) return hit.rows;
   const wk = period === 'week' ? weekId() : null;
   const [wins, played, last] = await Promise.all([zall(K.wins(g, wk), 500), zall(K.played(g, wk), 500), hgetall(K.last)]);
   const keys = [...new Set([...played.keys(), ...wins.keys()])];
-  const rows = await Promise.all(keys.map(async (k) => {
-    const a = await get(K.acct(k));
+  const missing = keys.filter((k) => !names.has(k));
+  if (missing.length && r) {
+    const vals = await r.mGet(missing.map(K.acct));
+    vals.forEach((v, i) => { try { const a = v && JSON.parse(v); if (a && a.name) names.set(missing[i], a.name); } catch (e) {} });
+  } else for (const k of missing) await get(K.acct(k));
+  const rows = keys.map((k) => {
     const w = wins.get(k) || 0, p = Math.max(played.get(k) || 0, w);
-    return { key: k, name: a ? a.name : k, wins: w, played: p, last: last[k] || null };
-  }));
+    return { key: k, name: names.get(k) || k, wins: w, played: p, last: last[k] || null };
+  });
   rows.sort((a, b) => b.wins - a.wins || (b.wins / (b.played || 1)) - (a.wins / (a.played || 1)) || b.played - a.played || a.name.localeCompare(b.name));
   rows.forEach((x, i) => { x.rank = i + 1; });
+  lbCache.set(ck, { at: Date.now(), rows });
+  return rows;
+}
+async function leaderboard(game, limit = 50, period = 'all', mineKey = null) {
+  const rows = (await rankedRows(boardOf(game), period === 'week' ? 'week' : 'all')).map((x) => ({ ...x }));
   const mine = mineKey ? rows.find((x) => x.key === mineKey) || null : null;
   const out = rows.slice(0, limit);
   out.mine = mine;
@@ -311,13 +340,22 @@ async function setMeta(key, val) {
 // even after a table has closed.
 const CHAT_LOG = 'lc:chatlog', CHAT_LOG_MAX = 300, CHAT_LOG_DAYS = 14;
 const memChat = [];
+// Messages wait here and go to the store together every 15 s: 3 commands per batch instead of 3 per message.
+let chatBuf = [], chatTimer = null;
+async function flushChat() {
+  clearTimeout(chatTimer); chatTimer = null;
+  if (!chatBuf.length || !r) return;
+  const batch = chatBuf; chatBuf = [];
+  try { await r.multi().lPush(CHAT_LOG, batch).lTrim(CHAT_LOG, 0, CHAT_LOG_MAX - 1).expire(CHAT_LOG, CHAT_LOG_DAYS * 86400).exec(); }
+  catch (e) { chatBuf = batch.concat(chatBuf).slice(-CHAT_LOG_MAX); }
+}
 async function logChat(m) {
   const v = JSON.stringify({ code: m.code, name: m.name, text: m.text, at: m.at });
-  if (r) { await r.lPush(CHAT_LOG, v); await r.lTrim(CHAT_LOG, 0, CHAT_LOG_MAX - 1); await r.expire(CHAT_LOG, CHAT_LOG_DAYS * 86400); }
+  if (r) { chatBuf.push(v); if (chatBuf.length > CHAT_LOG_MAX) chatBuf.shift(); if (!chatTimer) chatTimer = setTimeout(flushChat, 15_000); }
   else { memChat.unshift(v); memChat.length = Math.min(memChat.length, CHAT_LOG_MAX); }
 }
 async function chatLog(n = 80) {
-  const list = r ? await r.lRange(CHAT_LOG, 0, n - 1) : memChat.slice(0, n);
+  const list = r ? chatBuf.slice().reverse().concat(await r.lRange(CHAT_LOG, 0, n - 1)).slice(0, n) : memChat.slice(0, n);
   const cutoff = Date.now() - CHAT_LOG_DAYS * 86400e3;
   return list.map((v) => { try { return JSON.parse(v); } catch (e) { return null; } }).filter((m) => m && m.at > cutoff);
 }
@@ -333,9 +371,13 @@ async function bumpStat(name, by = 1) {
   if (r) { await r.hIncrBy(k, d, by); await r.hIncrBy(k, 'all', by); return; }
   const m = mem.kv.get(k) || {}; m[d] = (m[d] || 0) + by; m.all = (m.all || 0) + by; mem.kv.set(k, m);
 }
+const activeSeen = new Set();
 async function markActive(acctKey) {
   if (!acctKey) return;
   const k = 'lc:stat:active:' + dayId();
+  if (activeSeen.has(k + acctKey)) return;
+  if (activeSeen.size > 20000) activeSeen.clear();
+  activeSeen.add(k + acctKey);
   if (r) { await r.sAdd(k, acctKey); await r.expire(k, STAT_TTL); return; }
   const s = mem.kv.get(k) || new Set(); s.add(acctKey); mem.kv.set(k, s);
 }
@@ -360,6 +402,6 @@ async function stats() {
 }
 
 const persistent = () => !!r;
-async function close() { if (r) { try { await r.quit(); } catch (e) {} } }
+async function close() { if (r) { try { await flushChat(); await r.quit(); } catch (e) {} } }
 
-module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, allowPinReset, setNewPin, fbCreate, fbGet, fbList, fbUpdate, fbTodo, FB_STATUS, bumpStat, markActive, stats, GAMES: { lastcard: 'Last Card' } };
+module.exports = { init, login, checkName, fromSession, logout, recordResult, leaderboard, keyOf, persistent, close, savePush, pushSubs, dropPush, meta, setMeta, logChat, chatLog, allowPinReset, setNewPin, fbCreate, fbGet, fbList, fbUpdate, fbTodo, FB_STATUS, bumpStat, markActive, stats, GAMES };
